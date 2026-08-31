@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FLASH LABELING — Sign In</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="hero">
+    <p class="micro-cap">Collaborative YOLO Annotation</p>
+    <h1 class="display-xxl">Flash Labeling</h1>
+    <div class="auth-card">
+      <div class="row mb-2" style="justify-content:center;gap:32px;">
+        <button class="btn btn-ghost-dark btn-sm" id="tabLogin">Sign In</button>
+        <button class="btn btn-ghost-dark btn-sm" id="tabRegister" style="opacity:0.5">Register</button>
+      </div>
+      <form id="authForm">
+        <div class="col">
+          <div id="nameField" class="hidden">
+            <label for="name">Name</label>
+            <input type="text" id="name" autocomplete="name">
+          </div>
+          <div>
+            <label for="email">Email</label>
+            <input type="email" id="email" required autocomplete="email">
+          </div>
+          <div>
+            <label for="password">Password</label>
+            <input type="password" id="password" required autocomplete="current-password" minlength="6">
+          </div>
+          <button type="submit" class="btn btn-ghost-dark mt-2" id="submitBtn">Sign In</button>
+          <p class="error hidden" id="errMsg"></p>
+        </div>
+      </form>
+    </div>
+  </div>
+  <script src="/js/api.js"></script>
+  <script src="/js/login.js"></script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Projects — Flash Labeling</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <nav>
+    <a class="logo" href="/projects.html">Flash Labeling</a>
+    <div class="nav-links">
+      <span id="userName" class="text-mute"></span>
+      <button class="nav-btn" id="logoutBtn">Sign Out</button>
+    </div>
+  </nav>
+  <div class="container">
+    <div class="row-between mb-4">
+      <h1 class="display-lg">Projects</h1>
+      <button class="btn btn-ghost-dark" id="newProjectBtn">New Project</button>
+    </div>
+    <div id="createPanel" class="panel mb-4 hidden">
+      <h2 class="micro-cap mb-2">Create Project</h2>
+      <form id="createForm" class="col">
+        <div><label>Project Name</label><input type="text" id="projName" required></div>
+        <div><label>Classes (comma-separated)</label><input type="text" id="projClasses" placeholder="car, person, dog"></div>
+        <button type="submit" class="btn btn-ghost-dark btn-sm" style="align-self:flex-start">Create</button>
+        <p class="error hidden" id="createErr"></p>
+      </form>
+    </div>
+    <div id="projectList" class="grid-auto"></div>
+    <p id="emptyMsg" class="text-mute hidden" style="text-align:center;padding:48px 0;">No projects yet. Create one to get started.</p>
+  </div>
+  <script src="/js/api.js"></script>
+  <script src="/js/projects.js"></script>
+</body>
+</html>

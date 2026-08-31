@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Project — Flash Labeling</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <nav>
+    <a class="logo" href="/projects.html">Flash Labeling</a>
+    <div class="nav-links">
+      <span id="userName" class="text-mute"></span>
+      <button class="nav-btn" id="logoutBtn">Sign Out</button>
+    </div>
+  </nav>
+  <div class="container">
+    <div class="row-between mb-2">
+      <div>
+        <p class="micro-cap" id="projRole"></p>
+        <h1 class="display-lg" id="projName"></h1>
+      </div>
+      <div class="row">
+        <a class="btn btn-ghost-dark btn-sm" id="exportBtn" href="#">Export YOLO</a>
+      </div>
+    </div>
+    <p class="text-mute mb-4" id="projMeta"></p>
+
+    <div class="grid-2 mb-4">
+      <div class="panel">
+        <h2 class="micro-cap mb-2">Upload Images</h2>
+        <form id="uploadForm">
+          <input type="file" id="fileInput" multiple accept="image/*" style="margin-bottom:12px;">
+          <button type="submit" class="btn btn-ghost-dark btn-sm">Upload</button>
+          <p class="error hidden" id="uploadErr"></p>
+          <p class="success hidden" id="uploadOk"></p>
+        </form>
+      </div>
+      <div class="panel">
+        <h2 class="micro-cap mb-2">Members</h2>
+        <div id="memberList" class="col"></div>
+        <form id="addMemberForm" class="row mt-2 hidden">
+          <input type="email" id="memberEmail" placeholder="user@example.com" required style="flex:1">
+          <button type="submit" class="btn btn-ghost-dark btn-sm">Add</button>
+        </form>
+        <p class="error hidden" id="memberErr"></p>
+      </div>
+    </div>
+
+    <div class="row-between mb-2">
+      <h2 class="micro-cap">Images</h2>
+      <div class="row">
+        <button class="btn btn-ghost-dark btn-sm" id="filterAll">All</button>
+        <button class="btn btn-ghost-dark btn-sm" id="filterUnlabeled">Unlabeled</button>
+        <button class="btn btn-ghost-dark btn-sm" id="filterMine">My Claims</button>
+      </div>
+    </div>
+    <div id="imageGrid" class="grid-auto"></div>
+    <p id="emptyImages" class="text-mute hidden" style="text-align:center;padding:48px 0;">No images uploaded yet.</p>
+  </div>
+  <script src="/js/api.js"></script>
+  <script src="/js/project.js"></script>
+</body>
+</html>
