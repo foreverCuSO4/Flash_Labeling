@@ -21,10 +21,16 @@
         <h1 class="display-lg" id="projName"></h1>
       </div>
       <div class="row">
+        <a class="btn btn-ghost-dark btn-sm" id="settingsBtn" href="#">Settings</a>
         <a class="btn btn-ghost-dark btn-sm" id="exportBtn" href="#">Export YOLO</a>
       </div>
     </div>
     <p class="text-mute mb-4" id="projMeta"></p>
+
+    <div class="panel mb-4 hidden" id="guidelinesPanel">
+      <h2 class="micro-cap mb-2">Annotation Guidelines</h2>
+      <div class="md-preview" id="guidelinesView"></div>
+    </div>
 
     <div class="grid-2 mb-4">
       <div class="panel">
@@ -58,6 +64,7 @@
     <div id="imageGrid" class="grid-auto"></div>
     <p id="emptyImages" class="text-mute hidden" style="text-align:center;padding:48px 0;">No images uploaded yet.</p>
   </div>
+  <script src="/vendor/marked.min.js"></script>
   <script src="/js/api.js"></script>
   <script src="/js/project.js"></script>
 </body>

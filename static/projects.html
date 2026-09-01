@@ -23,7 +23,22 @@
       <h2 class="micro-cap mb-2">Create Project</h2>
       <form id="createForm" class="col">
         <div><label>Project Name</label><input type="text" id="projName" required></div>
+        <div>
+          <label>Annotation Mode</label>
+          <div class="row">
+            <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;">
+              <input type="radio" name="mode" value="detection" checked style="width:auto"> Detection (bbox)
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;">
+              <input type="radio" name="mode" value="pose" style="width:auto"> Pose (keypoints)
+            </label>
+          </div>
+        </div>
         <div><label>Classes (comma-separated)</label><input type="text" id="projClasses" placeholder="car, person, dog"></div>
+        <div id="poseFields" class="hidden">
+          <div><label>Keypoints (comma-separated, YOLO order)</label><input type="text" id="projKeypoints" placeholder="nose, left_eye, right_eye, left_shoulder, right_shoulder"></div>
+          <div class="mt-2"><label>Skeleton Edges (e.g. 0-1, 1-3)</label><input type="text" id="projSkeleton" placeholder="0-1, 0-2, 1-3, 2-4"></div>
+        </div>
         <button type="submit" class="btn btn-ghost-dark btn-sm" style="align-self:flex-start">Create</button>
         <p class="error hidden" id="createErr"></p>
       </form>

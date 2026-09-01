@@ -16,10 +16,15 @@ async function init() {
 
   try { project = await API.get(`/api/projects/${projectId}`); } catch { window.location.href = '/projects.html'; return; }
   document.getElementById('projName').textContent = project.name;
-  document.getElementById('projRole').textContent = project.role;
+  document.getElementById('projRole').textContent = `${project.role} · ${project.mode}`;
   document.getElementById('projMeta').textContent =
     `${project.classes.map(c => c.name).join(' · ') || 'No classes'} — ${project.labeled_count}/${project.image_count} labeled`;
   document.getElementById('exportBtn').href = `/api/projects/${projectId}/export`;
+  document.getElementById('settingsBtn').href = `/project_settings.html?id=${projectId}`;
+  if (project.guidelines) {
+    document.getElementById('guidelinesPanel').classList.remove('hidden');
+    document.getElementById('guidelinesView').innerHTML = marked.parse(project.guidelines);
+  }
 
   // Upload
   const uploadErr = document.getElementById('uploadErr');
