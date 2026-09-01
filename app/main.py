@@ -49,3 +49,19 @@ def image_file(image_id: int):
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+
+
+@app.middleware("http")
+async def no_cache_static(request, call_next):
+    """Force revalidation on every load so redeploys show up without hard refresh.
+
+    ETag/Last-Modified still make unchanged assets a cheap 304. Image files get a
+    long cache instead — their URLs are unique per upload (uuid names).
+    """
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/api/images/"):
+        response.headers["Cache-Control"] = "max-age=31536000, immutable"
+    elif not path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
