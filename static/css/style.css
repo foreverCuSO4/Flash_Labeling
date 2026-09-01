@@ -29,6 +29,17 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* Slim dark scrollbar — the default OS scrollbar clashes with the night canvas */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #4a4a4f transparent;
+}
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #4a4a4f; border-radius: 3px; }
+*::-webkit-scrollbar-thumb:hover { background: #6a6a70; }
+*::-webkit-scrollbar-corner { background: transparent; }
+
 body {
   background: var(--canvas-night);
   color: var(--on-primary);
