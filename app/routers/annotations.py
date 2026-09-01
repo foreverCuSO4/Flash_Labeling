@@ -1,14 +1,22 @@
+import json
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from ..db import get_session
-from ..models import Annotation, Image, ProjectClass, User
+from ..models import Annotation, Image, Project, ProjectClass, User
 from ..security import current_user, require_member
 
 router = APIRouter(tags=["annotations"])
+
+
+class KeypointIn(BaseModel):
+    x: float
+    y: float
+    v: int = 2  # 0=not labeled, 1=occluded, 2=visible
 
 
 class BoxIn(BaseModel):
@@ -17,6 +25,7 @@ class BoxIn(BaseModel):
     y: float
     w: float
     h: float
+    keypoints: Optional[list[KeypointIn]] = None
 
 
 def _validate_box(box: BoxIn) -> None:
@@ -25,6 +34,19 @@ def _validate_box(box: BoxIn) -> None:
     half_w, half_h = box.w / 2, box.h / 2
     if box.x - half_w < -1e-6 or box.x + half_w > 1 + 1e-6 or box.y - half_h < -1e-6 or box.y + half_h > 1 + 1e-6:
         raise HTTPException(400, "box extends outside image bounds")
+
+
+def _validate_keypoints(box: BoxIn, project: Project) -> None:
+    expected = len(json.loads(project.keypoints or "[]"))
+    if box.keypoints is None:
+        raise HTTPException(400, "pose project requires keypoints on every instance")
+    if len(box.keypoints) != expected:
+        raise HTTPException(400, f"expected {expected} keypoints, got {len(box.keypoints)}")
+    for kp in box.keypoints:
+        if kp.v not in (0, 1, 2):
+            raise HTTPException(400, "keypoint v must be 0 (not labeled), 1 (occluded) or 2 (visible)")
+        if kp.v > 0 and not (0 <= kp.x <= 1 and 0 <= kp.y <= 1):
+            raise HTTPException(400, "visible keypoint coordinates must be normalized to [0,1]")
 
 
 def _get_image_checked(image_id: int, session: Session) -> Image:
@@ -39,6 +61,7 @@ def ann_out(a: Annotation, cls: ProjectClass) -> dict:
         "id": a.id, "class_id": a.class_id, "class_name": cls.name if cls else "?",
         "ord": cls.ord if cls else -1,
         "x": a.x, "y": a.y, "w": a.w, "h": a.h,
+        "keypoints": json.loads(a.keypoints) if a.keypoints else None,
     }
 
 
@@ -63,7 +86,7 @@ def save_annotations(
 ):
     """Atomic replace: the canvas sends the full box set; we rewrite all rows."""
     img = _get_image_checked(image_id, session)
-    require_member(img.project_id, user, session)
+    project, _ = require_member(img.project_id, user, session)
     valid_classes = {
         c.id for c in session.exec(select(ProjectClass).where(ProjectClass.project_id == img.project_id)).all()
     }
@@ -71,6 +94,10 @@ def save_annotations(
         if box.class_id not in valid_classes:
             raise HTTPException(400, f"class_id {box.class_id} not in project")
         _validate_box(box)
+        if project.mode == "pose":
+            _validate_keypoints(box, project)
+        elif box.keypoints is not None:
+            raise HTTPException(400, "keypoints are only valid in pose projects")
     for old in session.exec(select(Annotation).where(Annotation.image_id == image_id)).all():
         session.delete(old)
     now = datetime.now(timezone.utc)
@@ -78,6 +105,7 @@ def save_annotations(
         session.add(Annotation(
             image_id=image_id, class_id=box.class_id,
             x=box.x, y=box.y, w=box.w, h=box.h,
+            keypoints=json.dumps([kp.model_dump() for kp in box.keypoints]) if box.keypoints else None,
             created_by=user.id, updated_at=now,
         ))
     img.status = "labeled" if boxes else "unlabeled"

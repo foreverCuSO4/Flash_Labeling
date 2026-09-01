@@ -13,6 +13,36 @@ def init_db() -> None:
     from . import models  # noqa: F401  (register tables)
 
     SQLModel.metadata.create_all(engine)
+    _migrate()
+
+
+# Columns added after the initial schema; create_all won't alter existing tables,
+# so patch them in with ALTER TABLE when missing.
+_COLUMN_MIGRATIONS = {
+    "project": {
+        "mode": "VARCHAR DEFAULT 'detection'",
+        "guidelines": "TEXT DEFAULT ''",
+        "keypoints": "TEXT DEFAULT '[]'",
+        "skeleton": "TEXT DEFAULT '[]'",
+    },
+    "projectclass": {
+        "description": "TEXT DEFAULT ''",
+    },
+    "annotation": {
+        "keypoints": "TEXT",
+    },
+}
+
+
+def _migrate() -> None:
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        for table, columns in _COLUMN_MIGRATIONS.items():
+            existing = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
+            for col, ddl in columns.items():
+                if col not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
 
 
 def get_session():

@@ -20,6 +20,10 @@ class Project(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
     owner_id: int = Field(foreign_key="user.id")
+    mode: str = Field(default="detection")  # detection | pose
+    guidelines: str = Field(default="")  # annotation guidelines, Markdown
+    keypoints: str = Field(default="[]")  # JSON list of keypoint names (pose mode)
+    skeleton: str = Field(default="[]")  # JSON list of [i, j] edges (pose mode)
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -27,6 +31,7 @@ class ProjectClass(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)
     name: str
+    description: str = Field(default="")  # what this class means semantically
     ord: int  # YOLO class id
 
 
@@ -59,5 +64,6 @@ class Annotation(SQLModel, table=True):
     y: float  # normalized center y
     w: float  # normalized width
     h: float  # normalized height
+    keypoints: Optional[str] = None  # JSON [{"x","y","v"},...] for pose mode, None for detection
     created_by: int = Field(foreign_key="user.id")
     updated_at: datetime = Field(default_factory=utcnow)
