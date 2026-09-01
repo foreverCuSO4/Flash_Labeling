@@ -33,6 +33,34 @@ class TestAvatar:
         assert r.headers["content-type"].startswith("image/svg+xml")
         assert "<svg" in r.text
 
+    def test_default_avatar_deterministic(self, client, alice):
+        r1 = client.get(f"/api/users/{alice['id']}/avatar")
+        r2 = client.get(f"/api/users/{alice['id']}/avatar")
+        assert r1.content == r2.content
+
+    def test_default_avatars_differ_between_users(self, client, alice, bob):
+        a = client.get(f"/api/users/{alice['id']}/avatar")
+        b = client.get(f"/api/users/{bob['id']}/avatar")
+        assert a.content != b.content
+
+    def test_default_avatar_uses_cjk_surname(self, client):
+        r = client.post("/api/auth/register", json={
+            "email": "zhangsan@test.com", "name": "张三", "password": "pass789",
+        })
+        assert r.status_code == 200
+        uid = r.json()["id"]
+        r = client.get(f"/api/users/{uid}/avatar")
+        assert r.status_code == 200
+        assert "张" in r.text
+
+    def test_default_avatar_two_letter_monogram(self, client):
+        r = client.post("/api/auth/register", json={
+            "email": "as@test.com", "name": "Alice Smith", "password": "pass789",
+        })
+        assert r.status_code == 200
+        r = client.get(f"/api/users/{r.json()['id']}/avatar")
+        assert "AS" in r.text
+
     def test_avatar_unknown_user(self, client, alice):
         assert client.get("/api/users/9999/avatar").status_code == 404
 

@@ -98,6 +98,8 @@ nav .logo {
   color: var(--on-primary);
 }
 nav .nav-links { display: flex; gap: 24px; align-items: center; }
+nav .nav-links span { line-height: 1; }
+nav .nav-links .avatar { display: block; }
 nav .nav-links a, nav .nav-links button.nav-btn {
   font-family: var(--font-body);  /* buttons don't inherit font-family from body */
   font-size: 13.008px;
@@ -196,7 +198,7 @@ label {
 }
 .avatar-sm { width: 32px; height: 32px; }
 .avatar-lg { width: 64px; height: 64px; }
-.avatar-btn { background: none; border: none; padding: 0; cursor: pointer; border-radius: 50%; }
+.avatar-btn { background: none; border: none; padding: 0; cursor: pointer; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; }
 .avatar-btn:hover .avatar { border-color: var(--on-primary); }
 .error { color: #ff6b6b; font-size: 13px; margin-top: 8px; }
 .success { color: #51cf66; font-size: 13px; margin-top: 8px; }

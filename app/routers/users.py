@@ -19,6 +19,9 @@ MAX_AVATAR_BYTES = 5 * 1024 * 1024
 # Same palette as .class-color-* in style.css
 _PALETTE = ["#ff6b6b", "#51cf66", "#339af0", "#ffd43b", "#cc5de8", "#ff922b", "#20c997", "#f783ac"]
 
+_SERIF_LATIN = "'EB Garamond', Georgia, 'Times New Roman', serif"
+_SERIF_CJK = "'Songti SC', 'STSong', 'SimSun', serif"
+
 
 def user_out(user: User) -> dict:
     return {
@@ -30,14 +33,38 @@ def user_out(user: User) -> dict:
     }
 
 
+def _monogram(name: str) -> tuple[str, str]:
+    """Pick the avatar glyph and a matching serif stack.
+
+    CJK names use the surname (first character); Latin names use a two-letter
+    monogram from the first two words, falling back to a single initial.
+    """
+    name = (name or "").strip()
+    if not name:
+        return "?", _SERIF_LATIN
+    if "一" <= name[0] <= "鿿":  # CJK Unified Ideographs
+        return name[0], _SERIF_CJK
+    words = [w for w in name.replace("_", " ").split() if w]
+    if len(words) >= 2:
+        return (words[0][0] + words[1][0]).upper(), _SERIF_LATIN
+    return name[0].upper(), _SERIF_LATIN
+
+
 def _default_avatar(user: User) -> Response:
-    """Generated fallback: colored circle with the user's initial."""
+    """Generated fallback: hairline ring, serif monogram, and a short accent arc
+    seeded by user id so identical monograms still look distinct."""
+    glyph, font_stack = _monogram(user.name)
     color = _PALETTE[user.id % len(_PALETTE)]
-    initial = escape((user.name or "?")[0].upper())
+    rotation = (user.id * 47) % 360
+    size = 30 if len(glyph) == 1 else 24
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
-        f'<circle cx="32" cy="32" r="32" fill="{color}"/>'
-        f'<text x="32" y="43" font-size="30" text-anchor="middle" fill="#000000">{initial}</text>'
+        '<circle cx="32" cy="32" r="32" fill="#000000"/>'
+        '<circle cx="32" cy="32" r="29.5" fill="none" stroke="#f0f0fa" stroke-opacity="0.55" stroke-width="1"/>'
+        f'<circle cx="32" cy="32" r="29.5" fill="none" stroke="{color}" stroke-width="2.5"'
+        f' stroke-linecap="round" stroke-dasharray="26 159.4" transform="rotate({rotation} 32 32)"/>'
+        f'<text x="32" y="33" font-family="{font_stack}" font-size="{size}"'
+        f' text-anchor="middle" dominant-baseline="central" fill="#f0f0fa">{escape(glyph)}</text>'
         "</svg>"
     )
     return Response(content=svg, media_type="image/svg+xml")
