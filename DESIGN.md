@@ -3,6 +3,8 @@ version: alpha
 name: Spasex-design-analysis
 description: An inspired interpretation of Spasex's design language — a mission-oriented aerospace brand built on pure black canvas, full-bleed photographic and video heroes of rockets and Mars landscapes, and uppercase D-DIN display type set in tight vertical leading. UI chrome is intentionally minimal: a single ghost outlined pill button per band, all-caps eyebrow microtext, and a fixed top nav over photography. The system is unapologetically austere — black, white, and the imagery itself.
 
+> **Project override (2026-08-31):** Typography follows the product requirement instead of D-DIN — English text renders in Garamond (bundled EB Garamond webfont), Chinese text in 华文中宋 (system font with STSong/SimSun fallback). All other tokens (colors, spacing, shapes, components) still apply.
+
 colors:
   primary: "#000000"
   ink: "#000000"

@@ -1,4 +1,14 @@
 /* DESIGN.md — SpaceX design tokens */
+/* Note: per project requirement, fonts override DESIGN.md's D-DIN rule —
+   English renders in Garamond (bundled EB Garamond), Chinese in 华文中宋 (system font). */
+@font-face {
+  font-family: "EB Garamond";
+  src: url("/fonts/eb-garamond-latin.woff2") format("woff2");
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --canvas-night: #000000;
   --canvas-night-soft: #0a0a0a;
@@ -10,8 +20,8 @@
   --on-primary: #ffffff;
   --on-primary-mute: #f0f0fa;
   --ink-mute: #5a5a5f;
-  --font-display: "D-DIN-Bold", "Arial Narrow", Arial, Verdana, sans-serif;
-  --font-body: "D-DIN", Arial, Verdana, sans-serif;
+  --font-display: "EB Garamond", Garamond, "STZhongsong", "华文中宋", "STSong", "SimSun", serif;
+  --font-body: "EB Garamond", Garamond, "STZhongsong", "华文中宋", "STSong", "SimSun", serif;
   --rounded-xs: 4px;
   --rounded-sm: 8px;
   --rounded-pill: 32px;
@@ -78,6 +88,7 @@ nav .logo {
 }
 nav .nav-links { display: flex; gap: 24px; align-items: center; }
 nav .nav-links a, nav .nav-links button.nav-btn {
+  font-family: var(--font-body);  /* buttons don't inherit font-family from body */
   font-size: 13.008px;
   font-weight: 700;
   line-height: 0.94;
