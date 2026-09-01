@@ -165,7 +165,48 @@ def main():
     check("export matches DB", export_coords == db_coords,
           f"export={export_coords} db={db_coords}")
 
-    # 10. Logout
+    # 10. Project settings: guidelines + class description
+    status, patched = api("PATCH", f"/api/projects/{proj_id}",
+                          {"guidelines": "# Smoke rules\n- box tightly", })
+    check("patch guidelines", status == 200 and patched["guidelines"].startswith("# Smoke"))
+    car_id = class_ids["car"]
+    status, cls = api("PATCH", f"/api/projects/{proj_id}/classes/{car_id}",
+                      {"description": "four-wheeled vehicle"})
+    check("class description", status == 200 and cls["description"] == "four-wheeled vehicle")
+
+    # 11. Pose project flow
+    status, pproj = api("POST", "/api/projects", {
+        "name": "SmokePose", "classes": ["person"], "mode": "pose",
+        "keypoints": ["nose", "l_shoulder", "r_shoulder"], "skeleton": [[0, 1], [0, 2]],
+    })
+    check("create pose project", status == 200 and pproj["mode"] == "pose")
+    pproj_id = pproj["id"]
+    pcls_id = pproj["classes"][0]["id"]
+
+    status, pimgs = api("POST", f"/api/projects/{pproj_id}/images/upload",
+                        files={"files": ("pose.png", make_png(), "image/png")})
+    check("pose upload", status == 200)
+    pimg_id = pimgs[0]["id"]
+
+    pose_boxes = [{
+        "class_id": pcls_id, "x": 0.5, "y": 0.5, "w": 0.4, "h": 0.6,
+        "keypoints": [{"x": 0.5, "y": 0.3, "v": 2}, {"x": 0.4, "y": 0.45, "v": 2}, {"x": 0.6, "y": 0.45, "v": 1}],
+    }]
+    status, result = api("PUT", f"/api/images/{pimg_id}/annotations", pose_boxes)
+    check("save pose annotation", status == 200 and result["count"] == 1)
+
+    status, zip_data = api("GET", f"/api/projects/{pproj_id}/export")
+    check("pose export zip", status == 200)
+    zf = zipfile.ZipFile(io.BytesIO(zip_data))
+    check("pose data.yaml", "data.yaml" in zf.namelist())
+    yaml_text = zf.read("data.yaml").decode()
+    check("kpt_shape in data.yaml", "kpt_shape: [3, 3]" in yaml_text)
+    plabel = zf.read(f"labels/{pimg_id}.txt").decode().strip().split()
+    check("pose label format", len(plabel) == 14 and plabel[0] == "0",
+          f"got {len(plabel)} parts")
+    check("pose visibility values", plabel[7] == "2" and plabel[10] == "2" and plabel[13] == "1")
+
+    # 12. Logout
     status, _ = api("POST", "/api/auth/logout")
     check("logout", status == 200)
 
