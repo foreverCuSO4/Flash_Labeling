@@ -1,4 +1,5 @@
 import io
+import re
 import zipfile
 from datetime import datetime, timedelta, timezone
 
@@ -267,6 +268,21 @@ class TestStats:
         client.delete(f"/api/images/{img['id']}/annotations")
         r = client.get(f"/api/projects/{project['id']}/stats")
         assert r.json()[0]["labeled_count"] == 0
+
+
+class TestCaching:
+    def test_image_url_is_content_addressed(self, client, project):
+        img = _upload(client, project["id"])
+        assert re.fullmatch(rf"/api/images/{img['id']}/file\?v=[0-9a-f]{{32}}\.png", img["url"])
+        r = client.get(img["url"])
+        assert r.status_code == 200
+        assert "immutable" in r.headers["cache-control"]
+
+    def test_annotations_not_immutable_cached(self, client, project):
+        img = _upload(client, project["id"])
+        r = client.get(f"/api/images/{img['id']}/annotations")
+        assert r.status_code == 200
+        assert "immutable" not in r.headers.get("cache-control", "")
 
 
 class TestExport:

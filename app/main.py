@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from re import fullmatch
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
@@ -56,16 +57,14 @@ app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 async def no_cache_static(request, call_next):
     """Force revalidation on every load so redeploys show up without hard refresh.
 
-    ETag/Last-Modified still make unchanged assets a cheap 304. Image files get a
-    long cache instead — their URLs are unique per upload (uuid names).
+    Only image file payloads get a long immutable cache — their URLs carry the
+    per-upload uuid (`/api/images/<id>/file?v=<stored_name>`), so reused rowids
+    can never collide with a stale cache entry. Everything else, including API
+    JSON like annotation lists, always revalidates.
     """
     response = await call_next(request)
-    path = request.url.path
-    if path.startswith("/api/images/"):
+    if fullmatch(r"/api/images/\d+/file", request.url.path):
         response.headers["Cache-Control"] = "max-age=31536000, immutable"
-    elif path.startswith("/api/users/"):
-        # Avatars change in place under a stable URL — always revalidate.
-        response.headers["Cache-Control"] = "no-cache"
-    elif not path.startswith("/api/"):
+    else:
         response.headers["Cache-Control"] = "no-cache"
     return response

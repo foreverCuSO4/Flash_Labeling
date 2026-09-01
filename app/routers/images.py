@@ -44,7 +44,9 @@ def image_out(img: Image, session: Session) -> dict:
         "claim_expired": claim_expired(img),
         "annotation_count": ann_count,
         "created_at": img.created_at.isoformat(),
-        "url": f"/api/images/{img.id}/file",
+        # Content-addressed URL: stored_name is a uuid unique per upload, so the
+        # immutable cache can never serve stale bytes when rowids get reused.
+        "url": f"/api/images/{img.id}/file?v={img.stored_name}",
     }
 
 
