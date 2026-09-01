@@ -24,7 +24,11 @@ def _upload(client, project_id):
     r = client.post(f"/api/projects/{project_id}/images/upload",
                     files={"files": ("t.png", buf, "image/png")})
     assert r.status_code == 200
-    return r.json()[0]
+    img = r.json()[0]
+    # Annotations require an active claim.
+    r = client.post(f"/api/projects/{project_id}/images/{img['id']}/claim")
+    assert r.status_code == 200
+    return img
 
 
 POSE_INSTANCE = {

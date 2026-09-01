@@ -4,6 +4,7 @@ let currentUser = null;
 let project = null;
 let allImages = [];
 let currentFilter = 'all';
+let currentTab = 'browse';
 
 async function init() {
   if (!projectId) { window.location.href = '/projects.html'; return; }
@@ -61,12 +62,39 @@ async function init() {
   }
   loadMembers();
 
+  // Tabs
+  document.getElementById('tabBrowse').onclick = () => setTab('browse');
+  document.getElementById('tabMine').onclick = () => setTab('mine');
+  document.getElementById('tabStats').onclick = () => setTab('stats');
+
   // Filters
   document.getElementById('filterAll').onclick = () => { currentFilter = 'all'; renderImages(); };
   document.getElementById('filterUnlabeled').onclick = () => { currentFilter = 'unlabeled'; renderImages(); };
-  document.getElementById('filterMine').onclick = () => { currentFilter = 'mine'; renderImages(); };
+
+  // Batch claim
+  const claimCount = document.getElementById('claimCount');
+  claimCount.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const step = e.deltaY < 0 ? 1 : -1;
+    const v = (parseInt(claimCount.value) || 1) + step;
+    claimCount.value = Math.max(1, Math.min(500, v));
+  }, { passive: false });
+  document.getElementById('claimBtn').onclick = claimBatch;
 
   loadImages();
+}
+
+function setTab(tab) {
+  currentTab = tab;
+  document.getElementById('tabBrowse').classList.toggle('tab-active', tab === 'browse');
+  document.getElementById('tabMine').classList.toggle('tab-active', tab === 'mine');
+  document.getElementById('tabStats').classList.toggle('tab-active', tab === 'stats');
+  document.getElementById('claimPanel').classList.toggle('hidden', tab !== 'browse');
+  document.getElementById('browseControls').classList.toggle('hidden', tab !== 'browse');
+  document.getElementById('imageGrid').classList.toggle('hidden', tab === 'stats');
+  document.getElementById('statsPanel').classList.toggle('hidden', tab !== 'stats');
+  if (tab === 'stats') loadStats();
+  renderImages();
 }
 
 async function loadMembers() {
@@ -78,6 +106,10 @@ async function loadMembers() {
   } catch {}
 }
 
+function isClaimed(img) { return img.claimed_by && !img.claim_expired; }
+function isMine(img) { return img.claimed_by === currentUser.id && !img.claim_expired; }
+function isAvailable(img) { return img.status === 'unlabeled' && !isClaimed(img); }
+
 async function loadImages() {
   try {
     allImages = await API.get(`/api/projects/${projectId}/images`);
@@ -86,6 +118,8 @@ async function loadImages() {
     const labeled = allImages.filter(i => i.status === 'labeled').length;
     document.getElementById('projMeta').textContent =
       `${project.classes.map(c => c.name).join(' · ') || 'No classes'} — ${labeled}/${allImages.length} labeled`;
+    const avail = allImages.filter(isAvailable).length;
+    document.getElementById('claimAvail').textContent = `${avail} available to claim`;
   } catch {}
 }
 
@@ -93,32 +127,76 @@ function renderImages() {
   const grid = document.getElementById('imageGrid');
   const empty = document.getElementById('emptyImages');
   let filtered = allImages;
-  if (currentFilter === 'unlabeled') filtered = allImages.filter(i => i.status === 'unlabeled');
-  if (currentFilter === 'mine') filtered = allImages.filter(i => i.claimed_by === currentUser.id);
-  empty.classList.toggle('hidden', filtered.length > 0);
+  if (currentTab === 'mine') {
+    filtered = allImages.filter(i => isMine(i) && i.status === 'unlabeled');
+  } else if (currentFilter === 'unlabeled') {
+    filtered = allImages.filter(i => i.status === 'unlabeled');
+  }
+  empty.textContent = currentTab === 'mine' ? 'No active claims.' : 'No images uploaded yet.';
+  empty.classList.toggle('hidden', filtered.length > 0 || currentTab === 'stats');
   grid.innerHTML = filtered.map(img => {
-    const claimed = img.claimed_by && !img.claim_expired;
-    const mine = img.claimed_by === currentUser.id;
+    const claimed = isClaimed(img);
+    const mine = isMine(img);
     const badgeClass = img.status === 'labeled' ? 'badge-labeled' : (claimed ? 'badge-claimed' : 'badge-unlabeled');
-    const badgeText = img.status === 'labeled' ? 'Labeled' : (claimed ? (mine ? 'Mine' : `Claimed`) : 'Unlabeled');
-    const canOpen = !claimed || mine;
+    const badgeText = img.status === 'labeled' ? 'Labeled' : (claimed ? (mine ? 'Mine' : 'Claimed') : 'Unlabeled');
+    const releaseBtn = currentTab === 'mine'
+      ? `<button class="btn btn-ghost-dark btn-sm thumb-release" onclick="releaseImage(${img.id}, event)">Release</button>`
+      : '';
     return `
-      <div class="thumb-card" ${canOpen ? `onclick="openImage(${img.id})"` : ''} style="${canOpen ? '' : 'opacity:0.5;cursor:not-allowed'}">
+      <div class="thumb-card" onclick="openImage(${img.id})">
         <img src="${img.url}" alt="${esc(img.filename)}" loading="lazy">
         <div class="thumb-info">
           <div class="row-between">
             <span style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(img.filename)}</span>
             <span class="badge ${badgeClass}">${badgeText}</span>
           </div>
-          <p class="text-mute" style="font-size:12px;margin-top:4px;">${img.annotation_count} box(es)${img.claimed_by_name ? ' · ' + esc(img.claimed_by_name) : ''}</p>
+          <p class="text-mute" style="font-size:12px;margin-top:4px;">${img.annotation_count} box(es)${claimed && img.claimed_by_name ? ' · ' + esc(img.claimed_by_name) : ''}</p>
+          ${releaseBtn}
         </div>
       </div>`;
   }).join('');
 }
 
-async function openImage(imageId) {
-  // Try to claim, then open annotate page regardless (annotate page handles read-only)
-  try { await API.post(`/api/projects/${projectId}/images/${imageId}/claim`); } catch {}
+async function claimBatch() {
+  const errEl = document.getElementById('claimErr');
+  const okEl = document.getElementById('claimOk');
+  hideErr(errEl); okEl.classList.add('hidden');
+  const count = parseInt(document.getElementById('claimCount').value);
+  if (!count || count < 1) { showErr(errEl, 'Enter a count of at least 1.'); return; }
+  try {
+    const r = await API.post(`/api/projects/${projectId}/images/claim`, { count });
+    okEl.textContent = `Claimed ${r.count} image(s).`;
+    okEl.classList.remove('hidden');
+    await loadImages();
+    if (r.count > 0) setTab('mine');
+  } catch (err) { showErr(errEl, err.detail || 'Claim failed'); }
+}
+
+async function releaseImage(imageId, e) {
+  if (e) e.stopPropagation();
+  try {
+    await API.post(`/api/projects/${projectId}/images/${imageId}/release`);
+    await loadImages();
+  } catch {}
+}
+
+async function loadStats() {
+  const panel = document.getElementById('statsPanel');
+  try {
+    const stats = await API.get(`/api/projects/${projectId}/stats`);
+    panel.innerHTML = `
+      <div class="panel">
+        <h2 class="micro-cap mb-2">Member Progress</h2>
+        <table class="stats-table">
+          <tr class="text-mute"><th>Name</th><th>Role</th><th>Labeled</th><th>Claiming</th></tr>
+          ${stats.map(s => `<tr><td>${esc(s.name)}</td><td>${esc(s.role)}</td><td>${s.labeled_count}</td><td>${s.claimed_count}</td></tr>`).join('')}
+        </table>
+      </div>`;
+  } catch {}
+}
+
+function openImage(imageId) {
+  // View-only by default; the annotate page enables editing when claimed by you.
   window.location.href = `/annotate.html?project=${projectId}&image=${imageId}`;
 }
 

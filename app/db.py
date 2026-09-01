@@ -35,6 +35,9 @@ _COLUMN_MIGRATIONS = {
     "annotation": {
         "keypoints": "TEXT",
     },
+    "image": {
+        "labeled_by": "INTEGER",
+    },
 }
 
 

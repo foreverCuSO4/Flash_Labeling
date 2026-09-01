@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 from ..db import get_session
 from ..models import Annotation, Image, Project, ProjectClass, User
 from ..security import current_user, require_member
+from .images import claim_expired
 
 router = APIRouter(tags=["annotations"])
 
@@ -77,6 +78,11 @@ def list_annotations(image_id: int, session: Session = Depends(get_session), use
     return out
 
 
+def _require_active_claim(img: Image, user: User) -> None:
+    if img.claimed_by != user.id or claim_expired(img):
+        raise HTTPException(403, "image not claimed by you")
+
+
 @router.put("/api/images/{image_id}/annotations")
 def save_annotations(
     image_id: int,
@@ -87,6 +93,7 @@ def save_annotations(
     """Atomic replace: the canvas sends the full box set; we rewrite all rows."""
     img = _get_image_checked(image_id, session)
     project, _ = require_member(img.project_id, user, session)
+    _require_active_claim(img, user)
     valid_classes = {
         c.id for c in session.exec(select(ProjectClass).where(ProjectClass.project_id == img.project_id)).all()
     }
@@ -109,6 +116,9 @@ def save_annotations(
             created_by=user.id, updated_at=now,
         ))
     img.status = "labeled" if boxes else "unlabeled"
+    img.labeled_by = user.id if boxes else None
+    # The claim is kept after labeling so the annotator can keep fixing and
+    # re-saving; it ends via manual release or the 24h lease expiring.
     session.add(img)
     session.commit()
     return {"ok": True, "count": len(boxes)}
@@ -118,9 +128,11 @@ def save_annotations(
 def clear_annotations(image_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)):
     img = _get_image_checked(image_id, session)
     require_member(img.project_id, user, session)
+    _require_active_claim(img, user)
     for old in session.exec(select(Annotation).where(Annotation.image_id == image_id)).all():
         session.delete(old)
     img.status = "unlabeled"
+    img.labeled_by = None
     session.add(img)
     session.commit()
     return {"ok": True}

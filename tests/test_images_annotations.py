@@ -1,7 +1,12 @@
 import io
 import zipfile
+from datetime import datetime, timedelta, timezone
 
 from PIL import Image as PILImage
+from sqlmodel import Session
+
+from app.db import engine
+from app.models import Image
 
 
 def _make_png(w=640, h=480, color=(100, 150, 200)):
@@ -19,6 +24,30 @@ def _upload(client, project_id, filename="test.png"):
     )
     assert r.status_code == 200
     return r.json()[0]
+
+
+def _claim(client, project_id, image_id):
+    r = client.post(f"/api/projects/{project_id}/images/{image_id}/claim")
+    assert r.status_code == 200
+
+
+def _login(client, email, password):
+    client.post("/api/auth/logout")
+    r = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert r.status_code == 200
+
+
+def _add_bob(client, project):
+    client.post(f"/api/projects/{project['id']}/members", json={"email": "bob@test.com"})
+    _login(client, "bob@test.com", "pass456")
+
+
+def _age_claim(image_id, hours):
+    with Session(engine) as s:
+        img = s.get(Image, image_id)
+        img.claimed_at = datetime.now(timezone.utc) - timedelta(hours=hours)
+        s.add(img)
+        s.commit()
 
 
 BOXES = [
@@ -54,8 +83,7 @@ class TestClaim:
         client.post(f"/api/projects/{project['id']}/members", json={"email": "bob@test.com"})
         client.post(f"/api/projects/{project['id']}/images/{img['id']}/claim")
 
-        client.post("/api/auth/logout")
-        client.post("/api/auth/login", json={"email": "bob@test.com", "password": "pass456"})
+        _login(client, "bob@test.com", "pass456")
         r = client.post(f"/api/projects/{project['id']}/images/{img['id']}/claim")
         assert r.status_code == 409
 
@@ -66,10 +94,69 @@ class TestClaim:
         assert r.status_code == 200
         assert r.json()["claimed_by"] is None
 
+    def test_claim_expires_after_24h(self, client, alice, bob, project):
+        img = _upload(client, project["id"])
+        _claim(client, project["id"], img["id"])
+        _age_claim(img["id"], 25)
+
+        r = client.get(f"/api/projects/{project['id']}/images")
+        assert r.json()[0]["claim_expired"] is True
+
+        _add_bob(client, project)
+        r = client.post(f"/api/projects/{project['id']}/images/{img['id']}/claim")
+        assert r.status_code == 200
+
+    def test_claim_fresh_within_24h(self, client, alice, bob, project):
+        img = _upload(client, project["id"])
+        _claim(client, project["id"], img["id"])
+        _age_claim(img["id"], 23)
+
+        _add_bob(client, project)
+        r = client.post(f"/api/projects/{project['id']}/images/{img['id']}/claim")
+        assert r.status_code == 409
+
+
+class TestBatchClaim:
+    def test_batch_claim(self, client, project):
+        for _ in range(5):
+            _upload(client, project["id"])
+        r = client.post(f"/api/projects/{project['id']}/images/claim", json={"count": 3})
+        assert r.status_code == 200
+        assert r.json()["count"] == 3
+
+        r = client.get(f"/api/projects/{project['id']}/images")
+        assert sum(1 for i in r.json() if i["claimed_by"] is not None) == 3
+
+    def test_batch_claim_skips_active_claims(self, client, project):
+        for _ in range(5):
+            _upload(client, project["id"])
+        client.post(f"/api/projects/{project['id']}/images/claim", json={"count": 3})
+        # My own active claims are skipped too: asking for 3 more gets the 2 left.
+        r = client.post(f"/api/projects/{project['id']}/images/claim", json={"count": 3})
+        assert r.json()["count"] == 2
+
+    def test_batch_claim_skips_others(self, client, alice, bob, project):
+        imgs = [_upload(client, project["id"]) for _ in range(4)]
+        _claim(client, project["id"], imgs[0]["id"])
+        _claim(client, project["id"], imgs[1]["id"])
+
+        _add_bob(client, project)
+        r = client.post(f"/api/projects/{project['id']}/images/claim", json={"count": 10})
+        assert r.json()["count"] == 2
+        claimed_ids = {i["id"] for i in r.json()["claimed"]}
+        assert claimed_ids == {imgs[2]["id"], imgs[3]["id"]}
+
+    def test_batch_claim_count_bounds(self, client, project):
+        _upload(client, project["id"])
+        assert client.post(f"/api/projects/{project['id']}/images/claim", json={"count": 0}).status_code == 422
+        assert client.post(f"/api/projects/{project['id']}/images/claim", json={"count": -1}).status_code == 422
+        assert client.post(f"/api/projects/{project['id']}/images/claim", json={"count": 501}).status_code == 422
+
 
 class TestAnnotations:
     def test_save_and_get(self, client, project):
         img = _upload(client, project["id"])
+        _claim(client, project["id"], img["id"])
         r = client.put(f"/api/images/{img['id']}/annotations", json=BOXES)
         assert r.status_code == 200
         assert r.json()["count"] == 2
@@ -80,43 +167,112 @@ class TestAnnotations:
         assert anns[0]["class_name"] == "car"
         assert anns[1]["class_name"] == "person"
 
+    def test_save_requires_claim(self, client, project):
+        img = _upload(client, project["id"])
+        r = client.put(f"/api/images/{img['id']}/annotations", json=BOXES)
+        assert r.status_code == 403
+
+    def test_save_forbidden_for_other_claimer(self, client, alice, bob, project):
+        img = _upload(client, project["id"])
+        _claim(client, project["id"], img["id"])
+        _add_bob(client, project)
+        r = client.put(f"/api/images/{img['id']}/annotations", json=BOXES)
+        assert r.status_code == 403
+
+    def test_save_after_claim_expired(self, client, project):
+        img = _upload(client, project["id"])
+        _claim(client, project["id"], img["id"])
+        _age_claim(img["id"], 25)
+        r = client.put(f"/api/images/{img['id']}/annotations", json=BOXES)
+        assert r.status_code == 403
+
     def test_save_updates_status(self, client, project):
         img = _upload(client, project["id"])
+        _claim(client, project["id"], img["id"])
         client.put(f"/api/images/{img['id']}/annotations", json=BOXES)
         r = client.get(f"/api/projects/{project['id']}/images")
         assert r.json()[0]["status"] == "labeled"
 
     def test_save_empty_resets_status(self, client, project):
         img = _upload(client, project["id"])
+        _claim(client, project["id"], img["id"])
         client.put(f"/api/images/{img['id']}/annotations", json=BOXES)
+        # The claim survives labeling, so re-saving within the lease works.
         client.put(f"/api/images/{img['id']}/annotations", json=[])
         r = client.get(f"/api/projects/{project['id']}/images")
         assert r.json()[0]["status"] == "unlabeled"
 
     def test_save_invalid_class(self, client, project):
         img = _upload(client, project["id"])
+        _claim(client, project["id"], img["id"])
         r = client.put(f"/api/images/{img['id']}/annotations",
                        json=[{"class_id": 999, "x": 0.5, "y": 0.5, "w": 0.1, "h": 0.1}])
         assert r.status_code == 400
 
     def test_save_out_of_bounds(self, client, project):
         img = _upload(client, project["id"])
+        _claim(client, project["id"], img["id"])
         r = client.put(f"/api/images/{img['id']}/annotations",
                        json=[{"class_id": 1, "x": 1.5, "y": 0.5, "w": 0.1, "h": 0.1}])
         assert r.status_code == 400
 
     def test_clear(self, client, project):
         img = _upload(client, project["id"])
+        _claim(client, project["id"], img["id"])
         client.put(f"/api/images/{img['id']}/annotations", json=BOXES)
         r = client.delete(f"/api/images/{img['id']}/annotations")
         assert r.status_code == 200
         r = client.get(f"/api/images/{img['id']}/annotations")
         assert r.json() == []
 
+    def test_clear_requires_claim(self, client, project):
+        img = _upload(client, project["id"])
+        _claim(client, project["id"], img["id"])
+        client.put(f"/api/images/{img['id']}/annotations", json=BOXES)
+        client.post(f"/api/projects/{project['id']}/images/{img['id']}/release")
+        r = client.delete(f"/api/images/{img['id']}/annotations")
+        assert r.status_code == 403
+
+
+class TestStats:
+    def test_stats_counts(self, client, alice, bob, project):
+        imgs = [_upload(client, project["id"]) for _ in range(3)]
+        # alice labels one, keeps one active claim, leaves one free
+        _claim(client, project["id"], imgs[0]["id"])
+        client.put(f"/api/images/{imgs[0]['id']}/annotations", json=BOXES)
+        _claim(client, project["id"], imgs[1]["id"])
+
+        _add_bob(client, project)
+        _claim(client, project["id"], imgs[2]["id"])
+
+        r = client.get(f"/api/projects/{project['id']}/stats")
+        assert r.status_code == 200
+        stats = {s["name"]: s for s in r.json()}
+        assert stats["Alice"]["labeled_count"] == 1
+        assert stats["Alice"]["claimed_count"] == 1
+        assert stats["Bob"]["labeled_count"] == 0
+        assert stats["Bob"]["claimed_count"] == 1
+
+    def test_stats_exclude_expired_claims(self, client, project):
+        img = _upload(client, project["id"])
+        _claim(client, project["id"], img["id"])
+        _age_claim(img["id"], 25)
+        r = client.get(f"/api/projects/{project['id']}/stats")
+        assert r.json()[0]["claimed_count"] == 0
+
+    def test_clear_resets_labeled_by(self, client, project):
+        img = _upload(client, project["id"])
+        _claim(client, project["id"], img["id"])
+        client.put(f"/api/images/{img['id']}/annotations", json=BOXES)
+        client.delete(f"/api/images/{img['id']}/annotations")
+        r = client.get(f"/api/projects/{project['id']}/stats")
+        assert r.json()[0]["labeled_count"] == 0
+
 
 class TestExport:
     def test_export_zip_structure(self, client, project):
         img = _upload(client, project["id"])
+        _claim(client, project["id"], img["id"])
         client.put(f"/api/images/{img['id']}/annotations", json=BOXES)
         r = client.get(f"/api/projects/{project['id']}/export")
         assert r.status_code == 200

@@ -5,6 +5,8 @@ const imageId = parseInt(params.get('image'));
 
 let project = null;
 let imageMeta = null;
+let currentUser = null;
+let readOnly = false;
 let boxes = [];       // { class_id, x, y, w, h, keypoints: [{x,y,v}]|null }
 let selectedClassIdx = 0;
 let selectedBoxIdx = -1;
@@ -35,7 +37,7 @@ const isPose = () => project && project.mode === 'pose';
 
 async function init() {
   if (!projectId || !imageId) { window.location.href = '/projects.html'; return; }
-  try { await API.get('/api/auth/me'); } catch { window.location.href = '/'; return; }
+  try { currentUser = await API.get('/api/auth/me'); } catch { window.location.href = '/'; return; }
 
   document.getElementById('backLink').href = `/project.html?id=${projectId}`;
   project = await API.get(`/api/projects/${projectId}`);
@@ -48,10 +50,12 @@ async function init() {
   }
   await loadImageMeta();
   await loadAnnotations();
+  applyReadOnly();
 
   document.getElementById('saveBtn').onclick = save;
   document.getElementById('clearBtn').onclick = clearAll;
   document.getElementById('releaseBtn').onclick = releaseClaim;
+  document.getElementById('claimThisBtn').onclick = claimThis;
   document.getElementById('prevBtn').onclick = () => navigate(-1);
   document.getElementById('nextBtn').onclick = () => navigate(1);
 
@@ -61,6 +65,22 @@ async function init() {
   canvas.addEventListener('mouseleave', () => { if (drawing) { drawing = false; redraw(); } draggingKp = null; });
   document.addEventListener('keydown', onKeyDown);
   window.addEventListener('resize', fitCanvas);
+}
+
+function applyReadOnly() {
+  readOnly = !(imageMeta.claimed_by === currentUser.id && !imageMeta.claim_expired);
+  document.getElementById('saveBtn').classList.toggle('hidden', readOnly);
+  document.getElementById('clearBtn').classList.toggle('hidden', readOnly);
+  document.getElementById('releaseBtn').classList.toggle('hidden', readOnly);
+  document.getElementById('roBanner').classList.toggle('hidden', !readOnly);
+  document.getElementById('claimThisBtn').classList.toggle('hidden', !readOnly);
+}
+
+async function claimThis() {
+  try {
+    await API.post(`/api/projects/${projectId}/images/${imageId}/claim`);
+    window.location.reload();
+  } catch (err) { showErr(errMsg, err.detail || 'Claim failed'); }
 }
 
 function renderClasses() {
@@ -223,6 +243,7 @@ function hitTestKeypoint(pos) {
 }
 
 function onMouseDown(e) {
+  if (readOnly) return;
   const pos = getMousePos(e);
 
   if (placing) { placeKeypoint(pos); return; }
@@ -248,6 +269,7 @@ function onMouseDown(e) {
 }
 
 function onMouseMove(e) {
+  if (readOnly) return;
   const pos = getMousePos(e);
   if (draggingKp) {
     const [nx, ny] = toNorm(pos.x, pos.y);
@@ -263,6 +285,7 @@ function onMouseMove(e) {
 }
 
 function onMouseUp(e) {
+  if (readOnly) return;
   if (draggingKp) { draggingKp = null; return; }
   if (!drawing) return;
   drawing = false;
@@ -324,6 +347,7 @@ function cancelPlacing() {
 
 function onKeyDown(e) {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (readOnly) return;
   const n = parseInt(e.key);
   if (n >= 1 && n <= Math.min(project.classes.length, 8)) {
     selectedClassIdx = n - 1;
@@ -357,6 +381,7 @@ function onKeyDown(e) {
 function updateBoxCount() { boxCount.textContent = String(boxes.length); }
 
 async function save() {
+  if (readOnly) return;
   hideErr(errMsg); okMsg.classList.add('hidden');
   if (placing) { showErr(errMsg, 'Finish or cancel the current keypoint placement first (Esc).'); return; }
   try {
@@ -367,6 +392,7 @@ async function save() {
 }
 
 async function clearAll() {
+  if (readOnly) return;
   boxes = [];
   selectedBoxIdx = -1;
   placing = null;
@@ -393,7 +419,6 @@ async function navigate(dir) {
     const idx = images.findIndex(i => i.id === imageId);
     const next = images[idx + dir];
     if (!next) return;
-    try { await API.post(`/api/projects/${projectId}/images/${next.id}/claim`); } catch {}
     window.location.href = `/annotate.html?project=${projectId}&image=${next.id}`;
   } catch {}
 }

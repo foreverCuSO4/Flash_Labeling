@@ -5,6 +5,7 @@ from io import BytesIO
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from PIL import Image as PILImage
+from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from ..config import UPLOAD_DIR
@@ -15,14 +16,18 @@ from ..security import current_user, require_member
 router = APIRouter(prefix="/api/projects/{project_id}/images", tags=["images"])
 
 ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-CLAIM_TIMEOUT_MINUTES = 30
+CLAIM_TIMEOUT_HOURS = 24
+
+
+class ClaimBatchIn(BaseModel):
+    count: int = Field(ge=1, le=500)
 
 
 def claim_expired(img: Image) -> bool:
     if img.claimed_by is None or img.claimed_at is None:
         return False
     elapsed = (datetime.now(timezone.utc) - img.claimed_at.replace(tzinfo=timezone.utc)).total_seconds()
-    return elapsed > CLAIM_TIMEOUT_MINUTES * 60
+    return elapsed > CLAIM_TIMEOUT_HOURS * 3600
 
 
 def image_out(img: Image, session: Session) -> dict:
@@ -97,6 +102,35 @@ async def upload_images(
         session.refresh(img)
         out.append(image_out(img, session))
     return out
+
+
+@router.post("/claim")
+def claim_batch(
+    project_id: int,
+    body: ClaimBatchIn,
+    deps=Depends(require_member),
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Claim up to `count` oldest unlabeled images not currently under an active claim."""
+    candidates = session.exec(
+        select(Image)
+        .where(Image.project_id == project_id, Image.status == "unlabeled")
+        .order_by(Image.id)
+    ).all()
+    now = datetime.now(timezone.utc)
+    claimed = []
+    for img in candidates:
+        if len(claimed) >= body.count:
+            break
+        if img.claimed_by is not None and not claim_expired(img):
+            continue  # active claim (anyone's, including ours) — skip
+        img.claimed_by = user.id
+        img.claimed_at = now
+        session.add(img)
+        claimed.append(img)
+    session.commit()
+    return {"count": len(claimed), "claimed": [image_out(img, session) for img in claimed]}
 
 
 @router.post("/{image_id}/claim")

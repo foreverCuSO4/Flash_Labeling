@@ -188,6 +188,9 @@ def main():
     check("pose upload", status == 200)
     pimg_id = pimgs[0]["id"]
 
+    status, claimed = api("POST", f"/api/projects/{pproj_id}/images/{pimg_id}/claim")
+    check("pose claim", status == 200 and claimed["claimed_by"] is not None)
+
     pose_boxes = [{
         "class_id": pcls_id, "x": 0.5, "y": 0.5, "w": 0.4, "h": 0.6,
         "keypoints": [{"x": 0.5, "y": 0.3, "v": 2}, {"x": 0.4, "y": 0.45, "v": 2}, {"x": 0.6, "y": 0.45, "v": 1}],

@@ -53,6 +53,7 @@ class Image(SQLModel, table=True):
     status: str = Field(default="unlabeled", index=True)  # unlabeled | labeled
     claimed_by: Optional[int] = Field(default=None, foreign_key="user.id")
     claimed_at: Optional[datetime] = None
+    labeled_by: Optional[int] = Field(default=None, foreign_key="user.id")
     uploaded_by: int = Field(foreign_key="user.id")
     created_at: datetime = Field(default_factory=utcnow)
 

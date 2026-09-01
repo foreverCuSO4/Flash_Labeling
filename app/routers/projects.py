@@ -7,6 +7,7 @@ from sqlmodel import Session, func, select
 from ..db import get_session
 from ..models import Annotation, Image, Project, ProjectClass, ProjectMember, User
 from ..security import current_user, get_membership, require_member, require_owner
+from .images import claim_expired
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -245,6 +246,30 @@ def list_members(project_id: int, deps=Depends(require_member), session: Session
         u = session.get(User, m.user_id)
         if u:
             out.append({"user_id": u.id, "email": u.email, "name": u.name, "role": m.role})
+    return out
+
+
+@router.get("/{project_id}/stats")
+def project_stats(project_id: int, deps=Depends(require_member), session: Session = Depends(get_session)):
+    """Per-member progress: images labeled by each user and their active claims."""
+    members = session.exec(select(ProjectMember).where(ProjectMember.project_id == project_id)).all()
+    images = session.exec(select(Image).where(Image.project_id == project_id)).all()
+    labeled_by_user: dict[int, int] = {}
+    claimed_by_user: dict[int, int] = {}
+    for img in images:
+        if img.status == "labeled" and img.labeled_by is not None:
+            labeled_by_user[img.labeled_by] = labeled_by_user.get(img.labeled_by, 0) + 1
+        if img.status == "unlabeled" and img.claimed_by is not None and not claim_expired(img):
+            claimed_by_user[img.claimed_by] = claimed_by_user.get(img.claimed_by, 0) + 1
+    out = []
+    for m in members:
+        u = session.get(User, m.user_id)
+        if u:
+            out.append({
+                "user_id": u.id, "email": u.email, "name": u.name, "role": m.role,
+                "labeled_count": labeled_by_user.get(u.id, 0),
+                "claimed_count": claimed_by_user.get(u.id, 0),
+            })
     return out
 
 

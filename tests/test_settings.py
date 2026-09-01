@@ -61,6 +61,7 @@ class TestClassManagement:
                         files={"files": ("t.png", buf, "image/png")})
         img_id = r.json()[0]["id"]
         cid = project["classes"][0]["id"]
+        client.post(f"/api/projects/{project['id']}/images/{img_id}/claim")
         client.put(f"/api/images/{img_id}/annotations",
                    json=[{"class_id": cid, "x": 0.5, "y": 0.5, "w": 0.2, "h": 0.2}])
         r = client.delete(f"/api/projects/{project['id']}/classes/{cid}")

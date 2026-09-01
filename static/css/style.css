@@ -232,6 +232,13 @@ th {
 .badge-unlabeled { border-color: var(--on-primary-mute); color: var(--on-primary-mute); }
 .badge-claimed { border-color: #ffd43b; color: #ffd43b; }
 
+/* Tabs */
+.tab { opacity: 0.55; }
+.tab.tab-active { opacity: 1; border-color: var(--on-primary); }
+
+/* Per-card release button (My Claims tab) */
+.thumb-release { margin-top: 8px; padding: 6px 14px; font-size: 11px; }
+
 /* Hero band for auth page */
 .hero {
   min-height: 100vh;

@@ -54,14 +54,30 @@
     </div>
 
     <div class="row-between mb-2">
-      <h2 class="micro-cap">Images</h2>
       <div class="row">
+        <button class="btn btn-ghost-dark btn-sm tab tab-active" id="tabBrowse">Browse</button>
+        <button class="btn btn-ghost-dark btn-sm tab" id="tabMine">My Claims</button>
+        <button class="btn btn-ghost-dark btn-sm tab" id="tabStats">Stats</button>
+      </div>
+      <div class="row" id="browseControls">
         <button class="btn btn-ghost-dark btn-sm" id="filterAll">All</button>
         <button class="btn btn-ghost-dark btn-sm" id="filterUnlabeled">Unlabeled</button>
-        <button class="btn btn-ghost-dark btn-sm" id="filterMine">My Claims</button>
       </div>
     </div>
+
+    <div class="panel mb-4" id="claimPanel">
+      <div class="row">
+        <input type="number" id="claimCount" min="1" max="500" value="10" style="width:80px">
+        <button class="btn btn-ghost-dark btn-sm" id="claimBtn">Claim</button>
+        <span class="text-mute" style="font-size:12px" id="claimAvail"></span>
+      </div>
+      <p class="error hidden" id="claimErr"></p>
+      <p class="success hidden" id="claimOk"></p>
+      <p class="text-mute" style="font-size:12px;margin-top:8px;">Claims expire 24h after being made if the image is still unlabeled. Claimed images are editable only by you until released.</p>
+    </div>
+
     <div id="imageGrid" class="grid-auto"></div>
+    <div id="statsPanel" class="hidden"></div>
     <p id="emptyImages" class="text-mute hidden" style="text-align:center;padding:48px 0;">No images uploaded yet.</p>
   </div>
   <script src="/vendor/marked.min.js"></script>
