@@ -185,6 +185,19 @@ label {
 .mb-2 { margin-bottom: 16px; } .mb-4 { margin-bottom: 32px; }
 .hidden { display: none !important; }
 .text-mute { color: var(--on-primary-mute); }
+
+/* Avatars — circular crop */
+.avatar {
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--canvas-night-soft);
+  border: 1px solid var(--hairline-dark);
+}
+.avatar-sm { width: 32px; height: 32px; }
+.avatar-lg { width: 64px; height: 64px; }
+.avatar-btn { background: none; border: none; padding: 0; cursor: pointer; border-radius: 50%; }
+.avatar-btn:hover .avatar { border-color: var(--on-primary); }
 .error { color: #ff6b6b; font-size: 13px; margin-top: 8px; }
 .success { color: #51cf66; font-size: 13px; margin-top: 8px; }
 

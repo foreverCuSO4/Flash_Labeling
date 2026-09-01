@@ -4,6 +4,7 @@ from .config import DATA_DIR, DB_PATH
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "uploads").mkdir(parents=True, exist_ok=True)
+(DATA_DIR / "avatars").mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "exports").mkdir(parents=True, exist_ok=True)
 
 engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
@@ -19,6 +20,9 @@ def init_db() -> None:
 # Columns added after the initial schema; create_all won't alter existing tables,
 # so patch them in with ALTER TABLE when missing.
 _COLUMN_MIGRATIONS = {
+    "user": {
+        "avatar": "TEXT",
+    },
     "project": {
         "mode": "VARCHAR DEFAULT 'detection'",
         "guidelines": "TEXT DEFAULT ''",

@@ -3,6 +3,21 @@ async function init() {
   try { user = await API.get('/api/auth/me'); } catch { window.location.href = '/'; return; }
   document.getElementById('userName').textContent = user.name;
 
+  const avatarImg = document.getElementById('userAvatar');
+  const avatarInput = document.getElementById('avatarInput');
+  avatarImg.src = `/api/users/${user.id}/avatar`;
+  document.getElementById('avatarBtn').onclick = () => avatarInput.click();
+  avatarInput.onchange = async () => {
+    if (!avatarInput.files.length) return;
+    const fd = new FormData();
+    fd.append('file', avatarInput.files[0]);
+    try {
+      await API.post('/api/users/me/avatar', fd, true);
+      avatarImg.src = `/api/users/${user.id}/avatar?v=${Date.now()}`;
+    } catch (err) { alert(err.detail || 'Avatar upload failed'); }
+    avatarInput.value = '';
+  };
+
   document.getElementById('logoutBtn').onclick = async () => {
     await API.post('/api/auth/logout');
     window.location.href = '/';

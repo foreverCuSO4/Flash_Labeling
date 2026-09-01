@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import BASE_DIR, UPLOAD_DIR
 from .db import init_db
-from .routers import annotations, auth, export, images, projects
+from .routers import annotations, auth, export, images, projects, users
 
 STATIC_DIR = BASE_DIR / "static"
 
@@ -24,6 +24,7 @@ app.include_router(projects.router)
 app.include_router(images.router)
 app.include_router(annotations.router)
 app.include_router(export.router)
+app.include_router(users.router)
 
 
 @app.get("/api/health")
@@ -62,6 +63,9 @@ async def no_cache_static(request, call_next):
     path = request.url.path
     if path.startswith("/api/images/"):
         response.headers["Cache-Control"] = "max-age=31536000, immutable"
+    elif path.startswith("/api/users/"):
+        # Avatars change in place under a stable URL — always revalidate.
+        response.headers["Cache-Control"] = "no-cache"
     elif not path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-cache"
     return response

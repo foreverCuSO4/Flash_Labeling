@@ -13,6 +13,7 @@ class User(SQLModel, table=True):
     email: str = Field(unique=True, index=True)
     name: str
     password_hash: str
+    avatar: Optional[str] = Field(default=None)  # stored filename under AVATAR_DIR; None = default avatar
     created_at: datetime = Field(default_factory=utcnow)
 
 

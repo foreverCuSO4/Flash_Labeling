@@ -3,6 +3,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(__import__("os").environ.get("DATA_DIR", str(BASE_DIR / "data")))
 UPLOAD_DIR = DATA_DIR / "uploads"
+AVATAR_DIR = DATA_DIR / "avatars"
 EXPORT_DIR = DATA_DIR / "exports"
 DB_PATH = DATA_DIR / "app.db"
 SECRET_KEY = __import__("os").environ.get("SECRET_KEY", "dev-secret-change-me-in-production")

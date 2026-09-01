@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Users — Flash Labeling</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <nav>
+    <a class="logo" href="/projects.html">Flash Labeling</a>
+    <div class="nav-links">
+      <a href="/projects.html">Projects</a>
+      <span id="userName" class="text-mute"></span>
+      <img id="userAvatar" class="avatar avatar-sm" src="" alt="avatar">
+      <button class="nav-btn" id="logoutBtn">Sign Out</button>
+    </div>
+  </nav>
+  <div class="container">
+    <div class="row-between mb-4">
+      <h1 class="display-lg">Users</h1>
+    </div>
+    <div id="userList" class="grid-auto"></div>
+    <p id="emptyMsg" class="text-mute hidden" style="text-align:center;padding:48px 0;">No registered users yet.</p>
+  </div>
+  <script src="/js/api.js"></script>
+  <script src="/js/users.js"></script>
+</body>
+</html>
