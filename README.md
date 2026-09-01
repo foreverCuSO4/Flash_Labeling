@@ -1,6 +1,6 @@
 # Flash Labeling
 
-Collaborative YOLO bounding-box annotation platform. Python-first, single Docker image.
+Collaborative YOLO annotation platform — bounding boxes **and** pose keypoints. Python-first, single Docker image.
 
 ## Stack
 
@@ -8,6 +8,7 @@ Collaborative YOLO bounding-box annotation platform. Python-first, single Docker
 - **Frontend**: Vanilla JS + Canvas, served by FastAPI (no build chain)
 - **Auth**: Cookie session (PBKDF2 password hashing, itsdangerous tokens)
 - **Design**: [DESIGN.md](DESIGN.md) — SpaceX-inspired black/white system
+- **Fonts**: English in Garamond (bundled EB Garamond, OFL), Chinese in 华文中宋 / STZhongsong (system font; falls back to STSong → SimSun → serif when not installed)
 
 ## Quick Start
 
@@ -49,11 +50,24 @@ python scripts/smoke_test.py http://host:port # against remote
 ## Features
 
 - User registration / login (cookie session)
-- Projects with custom YOLO classes
+- Projects with custom classes; each class carries a semantic **description** shown to annotators
+- **Project settings page**: class management, Markdown **annotation guidelines**, pose keypoint/skeleton config — owner edits, annotators read
+- **Two annotation modes** per project:
+  - `detection` — bounding boxes
+  - `pose` — box + keypoints (visibility 0/1/2), exported as YOLO pose format
 - Multi-user: claim images to prevent duplicate work, 30-min claim expiry
-- Canvas annotation: draw, select, delete boxes; keyboard shortcuts
-- YOLO export: zip with `images/`, `labels/`, `classes.txt`
-- Project member management (owner adds/removes annotators)
+- Canvas: draw, select, delete; drag keypoints; keyboard shortcuts
+- YOLO export: zip with `images/`, `labels/`, `classes.txt`, `data.yaml` (includes `kpt_shape` for pose)
+- Lightweight DB migrations on startup (old databases keep working)
+
+## Pose Annotation Workflow
+
+1. Create a project with mode **Pose**, define keypoints (order matters — it's the YOLO order) and skeleton edges
+2. On the canvas: drag a box around the instance
+3. Click to place each keypoint in order (sidebar shows which one is next)
+4. `V` toggles the next keypoint's visibility: 2 visible → 1 occluded → 0 not labeled
+5. Drag placed keypoints to adjust; `Delete` removes the selected instance
+6. `S` saves
 
 ## Keyboard Shortcuts (Annotate Page)
 
@@ -61,5 +75,6 @@ python scripts/smoke_test.py http://host:port # against remote
 |-----|--------|
 | 1–8 | Select class |
 | S | Save annotations |
-| Delete / Backspace | Delete selected box |
-| Escape | Deselect |
+| V | Toggle keypoint visibility (pose mode, while placing) |
+| Delete / Backspace | Delete selected box/instance |
+| Escape | Deselect / cancel placement |
