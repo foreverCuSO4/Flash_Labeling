@@ -37,6 +37,9 @@
             <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;">
               <input type="radio" name="mode" value="pose" style="width:auto"> Pose (keypoints)
             </label>
+            <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;">
+              <input type="radio" name="mode" value="segment" style="width:auto"> Segment (polygon)
+            </label>
           </div>
         </div>
         <div><label>Classes (comma-separated)</label><input type="text" id="projClasses" placeholder="car, person, dog"></div>
@@ -47,6 +50,22 @@
         <button type="submit" class="btn btn-ghost-dark btn-sm" style="align-self:flex-start">Create</button>
         <p class="error hidden" id="createErr"></p>
       </form>
+      <div style="border-top:1px solid var(--hairline-dark);margin-top:16px;padding-top:16px;">
+        <h2 class="micro-cap mb-2">Or Create from dataset.yaml</h2>
+        <form id="yamlForm" class="col">
+          <div>
+            <label>YAML path on this server</label>
+            <input type="text" id="yamlPath" placeholder="/path/to/dataset.yaml" required>
+          </div>
+          <div>
+            <label>Project name (optional — inferred from the YAML)</label>
+            <input type="text" id="yamlName">
+          </div>
+          <p class="text-mute" style="font-size:12px;margin:0;">Creates the project with classes (and mode) taken from the YAML. Images and labels are not imported — upload them from the project page afterwards.</p>
+          <button type="submit" class="btn btn-ghost-dark btn-sm" style="align-self:flex-start">Create from YAML</button>
+          <p class="error hidden" id="yamlErr"></p>
+        </form>
+      </div>
     </div>
     <div id="projectList" class="grid-auto"></div>
     <p id="emptyMsg" class="text-mute hidden" style="text-align:center;padding:48px 0;">No projects yet. Create one to get started.</p>

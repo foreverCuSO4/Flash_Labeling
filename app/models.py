@@ -84,5 +84,6 @@ class Annotation(SQLModel, table=True):
     w: float  # normalized width
     h: float  # normalized height
     keypoints: Optional[str] = None  # JSON [{"x","y","v"},...] for pose mode, None for detection
+    polygon: Optional[str] = None  # JSON [[x,y],...] normalized vertices for segment mode, else None
     created_by: int = Field(foreign_key="user.id")
     updated_at: datetime = Field(default_factory=utcnow)

@@ -40,6 +40,7 @@ _COLUMN_MIGRATIONS = {
     },
     "annotation": {
         "keypoints": "TEXT",
+        "polygon": "TEXT",
     },
     "image": {
         "labeled_by": "INTEGER",

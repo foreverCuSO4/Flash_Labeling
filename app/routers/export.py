@@ -33,6 +33,12 @@ def _data_yaml(project, classes: list[ProjectClass]) -> str:
 
 
 def _label_line(ann: Annotation, cls: ProjectClass) -> str:
+    if ann.polygon:
+        # YOLO segment: class x1 y1 x2 y2 ... (polygon vertices, no bbox)
+        parts = [str(cls.ord)]
+        for px, py in json.loads(ann.polygon):
+            parts += [f"{px:.6f}", f"{py:.6f}"]
+        return " ".join(parts)
     parts = [str(cls.ord), f"{ann.x:.6f}", f"{ann.y:.6f}", f"{ann.w:.6f}", f"{ann.h:.6f}"]
     if ann.keypoints:
         for kp in json.loads(ann.keypoints):
@@ -46,6 +52,7 @@ def export_yolo(project_id: int, deps=Depends(require_member), session: Session 
 
     Detection: each label line is `class cx cy w h`.
     Pose: each label line is `class cx cy w h kp1x kp1y kp1v ...`.
+    Segment: each label line is `class x1 y1 x2 y2 ...` (polygon vertices).
     """
     project, _ = deps
     classes = session.exec(

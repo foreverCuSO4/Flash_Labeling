@@ -1,5 +1,7 @@
 import json
+from pathlib import Path
 
+import yaml
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, func, select
@@ -11,7 +13,7 @@ from .images import claim_expired
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
-VALID_MODES = {"detection", "pose"}
+VALID_MODES = {"detection", "pose", "segment"}
 
 
 class ProjectIn(BaseModel):
@@ -101,6 +103,82 @@ def create_project(body: ProjectIn, user: User = Depends(current_user), session:
         name = name.strip()
         if name:
             session.add(ProjectClass(project_id=project.id, name=name, ord=i))
+    session.commit()
+    membership = get_membership(session, project.id, user.id)
+    return project_out(session, project, membership)
+
+
+class YamlImportIn(BaseModel):
+    path: str  # dataset.yaml path on the server filesystem
+    name: str | None = None  # override the inferred project name
+    mode: str | None = None  # override the inferred annotation mode
+
+
+def _infer_mode_from_yaml(data: dict) -> str:
+    task = str(data.get("task") or "").lower()
+    fmt = str(data.get("annotation_format") or "").lower()
+    # kpt_shape means the labels are (possibly bbox-less) keypoint sets trained
+    # with a pose model — that signal beats a polygon-style annotation_format.
+    if data.get("kpt_shape") or "pose" in task:
+        return "pose"
+    if "quad" in task or "seg" in task:
+        return "segment"
+    if "x3" in fmt or "y3" in fmt:  # polygon point list beyond a plain bbox
+        return "segment"
+    return "detection"
+
+
+@router.post("/from-yaml")
+def create_project_from_yaml(body: YamlImportIn, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    """Create a project skeleton (name, classes, mode) from a dataset.yaml on disk.
+
+    Images/labels are not imported — only the project structure.
+    """
+    p = Path(body.path).expanduser()
+    if p.suffix.lower() not in (".yaml", ".yml") or not p.is_file():
+        raise HTTPException(400, f"not a readable YAML file: {body.path}")
+    try:
+        data = yaml.safe_load(p.read_text())
+    except yaml.YAMLError as e:
+        raise HTTPException(400, f"cannot parse YAML: {e}")
+    if not isinstance(data, dict):
+        raise HTTPException(400, "dataset YAML must be a mapping")
+
+    names = data.get("names")
+    if isinstance(names, dict):  # {0: cat, 1: dog} — order by class id
+        try:
+            names = [names[k] for k in sorted(names, key=int)]
+        except (ValueError, KeyError):
+            raise HTTPException(400, "names mapping must use integer class ids")
+    if not isinstance(names, list) or not names:
+        raise HTTPException(400, "dataset YAML has no class names")
+    classes = [str(n).strip() for n in names]
+    if not all(classes):
+        raise HTTPException(400, "class names must be non-empty")
+
+    mode = body.mode or _infer_mode_from_yaml(data)
+    if mode not in VALID_MODES:
+        raise HTTPException(400, f"mode must be one of {sorted(VALID_MODES)}")
+    name = (body.name or "").strip() or str(data.get("dataset_name") or data.get("name") or p.parent.name)
+
+    keypoints: list[str] = []
+    if mode == "pose":
+        kpt = data.get("kpt_shape")
+        n = kpt[0] if isinstance(kpt, (list, tuple)) and kpt and isinstance(kpt[0], int) else 0
+        if n <= 0:
+            raise HTTPException(400, "pose mode requires kpt_shape: [n, dim] in the YAML")
+        keypoints = [f"kp_{i}" for i in range(n)]
+
+    project = Project(
+        name=name, owner_id=user.id, mode=mode,
+        keypoints=json.dumps(keypoints), skeleton="[]",
+    )
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    session.add(ProjectMember(project_id=project.id, user_id=user.id, role="owner"))
+    for i, cname in enumerate(classes):
+        session.add(ProjectClass(project_id=project.id, name=cname, ord=i))
     session.commit()
     membership = get_membership(session, project.id, user.id)
     return project_out(session, project, membership)

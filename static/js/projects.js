@@ -61,6 +61,24 @@ async function init() {
     } catch (err) { showErr(createErr, err.detail || 'Failed'); }
   };
 
+  // Create from dataset.yaml (server-side path; structure only, no image import)
+  const yamlErr = document.getElementById('yamlErr');
+  document.getElementById('yamlForm').onsubmit = async (e) => {
+    e.preventDefault();
+    hideErr(yamlErr);
+    const body = { path: document.getElementById('yamlPath').value.trim() };
+    const name = document.getElementById('yamlName').value.trim();
+    if (name) body.name = name;
+    try {
+      const proj = await API.post('/api/projects/from-yaml', body);
+      document.getElementById('yamlPath').value = '';
+      document.getElementById('yamlName').value = '';
+      createPanel.classList.add('hidden');
+      loadProjects();
+      window.location.href = `/project.html?id=${proj.id}`;
+    } catch (err) { showErr(yamlErr, err.detail || 'Failed'); }
+  };
+
   loadProjects();
 }
 

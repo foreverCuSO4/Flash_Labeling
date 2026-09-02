@@ -27,6 +27,7 @@ class BoxIn(BaseModel):
     w: float
     h: float
     keypoints: Optional[list[KeypointIn]] = None
+    polygon: Optional[list[list[float]]] = None  # normalized [[x, y], ...] vertices, segment mode
 
 
 def _validate_box(box: BoxIn) -> None:
@@ -35,6 +36,23 @@ def _validate_box(box: BoxIn) -> None:
     half_w, half_h = box.w / 2, box.h / 2
     if box.x - half_w < -1e-6 or box.x + half_w > 1 + 1e-6 or box.y - half_h < -1e-6 or box.y + half_h > 1 + 1e-6:
         raise HTTPException(400, "box extends outside image bounds")
+
+
+def _validate_polygon(box: BoxIn) -> None:
+    if box.polygon is None:
+        raise HTTPException(400, "segment project requires a polygon on every instance")
+    if len(box.polygon) < 3:
+        raise HTTPException(400, "polygon needs at least 3 points")
+    for pt in box.polygon:
+        if len(pt) != 2 or not (0 <= pt[0] <= 1 and 0 <= pt[1] <= 1):
+            raise HTTPException(400, "polygon points must be [x, y] normalized to [0,1]")
+
+
+def _polygon_bbox(polygon: list[list[float]]) -> tuple[float, float, float, float]:
+    xs = [p[0] for p in polygon]
+    ys = [p[1] for p in polygon]
+    x1, x2, y1, y2 = min(xs), max(xs), min(ys), max(ys)
+    return (x1 + x2) / 2, (y1 + y2) / 2, max(x2 - x1, 1e-9), max(y2 - y1, 1e-9)
 
 
 def _validate_keypoints(box: BoxIn, project: Project) -> None:
@@ -63,6 +81,7 @@ def ann_out(a: Annotation, cls: ProjectClass) -> dict:
         "ord": cls.ord if cls else -1,
         "x": a.x, "y": a.y, "w": a.w, "h": a.h,
         "keypoints": json.loads(a.keypoints) if a.keypoints else None,
+        "polygon": json.loads(a.polygon) if a.polygon else None,
     }
 
 
@@ -100,11 +119,17 @@ def save_annotations(
     for box in boxes:
         if box.class_id not in valid_classes:
             raise HTTPException(400, f"class_id {box.class_id} not in project")
-        _validate_box(box)
         if project.mode == "pose":
             _validate_keypoints(box, project)
         elif box.keypoints is not None:
             raise HTTPException(400, "keypoints are only valid in pose projects")
+        if project.mode == "segment":
+            _validate_polygon(box)
+            # The stored bbox is derived from the polygon so the two never disagree.
+            box.x, box.y, box.w, box.h = _polygon_bbox(box.polygon)
+        elif box.polygon is not None:
+            raise HTTPException(400, "polygons are only valid in segment projects")
+        _validate_box(box)
     for old in session.exec(select(Annotation).where(Annotation.image_id == image_id)).all():
         session.delete(old)
     now = datetime.now(timezone.utc)
@@ -113,6 +138,7 @@ def save_annotations(
             image_id=image_id, class_id=box.class_id,
             x=box.x, y=box.y, w=box.w, h=box.h,
             keypoints=json.dumps([kp.model_dump() for kp in box.keypoints]) if box.keypoints else None,
+            polygon=json.dumps(box.polygon) if box.polygon else None,
             created_by=user.id, updated_at=now,
         ))
     img.status = "labeled" if boxes else "unlabeled"

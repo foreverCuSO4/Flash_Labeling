@@ -1,4 +1,4 @@
-/* Annotation canvas: detection (bbox) + pose (bbox + keypoints) modes */
+/* Annotation canvas: detection (bbox) + pose (bbox + keypoints) + segment (polygon) modes */
 const params = new URLSearchParams(window.location.search);
 const projectId = params.get('project');
 const imageId = parseInt(params.get('image'));
@@ -7,7 +7,7 @@ let project = null;
 let imageMeta = null;
 let currentUser = null;
 let readOnly = false;
-let boxes = [];       // { class_id, x, y, w, h, keypoints: [{x,y,v}]|null }
+let boxes = [];       // { class_id, x, y, w, h, keypoints: [{x,y,v}]|null, polygon: [[x,y],...]|null }
 let selectedClassIdx = 0;
 let selectedBoxIdx = -1;
 let drawing = false;
@@ -16,6 +16,9 @@ let drawCurrent = null;
 let placing = null;          // { boxIdx, nextKp } while placing keypoints
 let placingVis = 2;          // visibility for the next placed keypoint
 let draggingKp = null;       // { boxIdx, kpIdx } while dragging a keypoint
+let polyDraft = null;        // normalized [[x,y],...] of the polygon being drawn
+let draftCursor = null;      // canvas coords of the cursor, for draft preview
+let draggingVert = null;     // { boxIdx, ptIdx } while dragging a polygon vertex
 let imgElement = new Image();
 let imgLoaded = false;
 let scale = 1;
@@ -34,6 +37,7 @@ const kpList = document.getElementById('kpList');
 const kpStatus = document.getElementById('kpStatus');
 
 const isPose = () => project && project.mode === 'pose';
+const isSeg = () => project && project.mode === 'segment';
 
 async function init() {
   if (!projectId || !imageId) { window.location.href = '/projects.html'; return; }
@@ -48,6 +52,7 @@ async function init() {
     kpPanel.classList.remove('hidden');
     renderKpPanel();
   }
+  if (isSeg()) document.getElementById('segHint').classList.remove('hidden');
   await loadImageMeta();
   await loadAnnotations();
   applyReadOnly();
@@ -62,7 +67,8 @@ async function init() {
   canvas.addEventListener('mousedown', onMouseDown);
   canvas.addEventListener('mousemove', onMouseMove);
   canvas.addEventListener('mouseup', onMouseUp);
-  canvas.addEventListener('mouseleave', () => { if (drawing) { drawing = false; redraw(); } draggingKp = null; });
+  canvas.addEventListener('dblclick', onDblClick);
+  canvas.addEventListener('mouseleave', () => { if (drawing) { drawing = false; redraw(); } draggingKp = null; draggingVert = null; draftCursor = null; if (polyDraft) redraw(); });
   document.addEventListener('keydown', onKeyDown);
   window.addEventListener('resize', fitCanvas);
 }
@@ -113,7 +119,7 @@ function renderKpPanel() {
   if (placing) {
     kpStatus.textContent = `Click: ${project.keypoints[placing.nextKp]} (v=${placingVis}, V to toggle, Esc to cancel)`;
   } else {
-    kpStatus.textContent = 'Draw a box to start an instance.';
+    kpStatus.textContent = 'Draw a box to start an instance, or click empty canvas to place keypoints directly (box is derived).';
   }
 }
 
@@ -135,7 +141,7 @@ function updateNavInfo(images) {
 async function loadAnnotations() {
   try {
     const anns = await API.get(`/api/images/${imageId}/annotations`);
-    boxes = anns.map(a => ({ class_id: a.class_id, x: a.x, y: a.y, w: a.w, h: a.h, keypoints: a.keypoints || null }));
+    boxes = anns.map(a => ({ class_id: a.class_id, x: a.x, y: a.y, w: a.w, h: a.h, keypoints: a.keypoints || null, polygon: a.polygon || null }));
     updateBoxCount();
     redraw();
   } catch {}
@@ -172,11 +178,37 @@ function redraw() {
 
   boxes.forEach((b, i) => {
     const color = classColor(b.class_id);
+    const cls = project.classes.find(c => c.id === b.class_id);
+
+    if (b.polygon) {
+      const pts = b.polygon.map(([nx, ny]) => toCanvas(nx, ny));
+      ctx.beginPath();
+      pts.forEach(([px, py], pi) => { pi ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+      ctx.closePath();
+      ctx.fillStyle = color + '26';  // ~15% fill so the image stays readable
+      ctx.fill();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = i === selectedBoxIdx ? 3 : 2;
+      ctx.stroke();
+      ctx.font = '12px serif';
+      ctx.fillStyle = color;
+      ctx.fillText(cls ? cls.name : '?', pts[0][0] + 4, pts[0][1] - 6);
+      if (i === selectedBoxIdx) {
+        // vertex handles + indices on the selected polygon
+        pts.forEach(([px, py], pi) => {
+          ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI * 2);
+          ctx.fillStyle = color; ctx.fill();
+          ctx.font = '10px serif';
+          ctx.fillText(String(pi), px + 6, py - 4);
+        });
+      }
+      return;
+    }
+
     const [x, y, w, h] = boxToCanvas(b);
     ctx.strokeStyle = color;
     ctx.lineWidth = i === selectedBoxIdx ? 3 : 2;
     ctx.strokeRect(x, y, w, h);
-    const cls = project.classes.find(c => c.id === b.class_id);
     ctx.font = '12px serif';
     ctx.fillStyle = color;
     ctx.fillText(cls ? cls.name : '?', x + 4, y - 4);
@@ -209,6 +241,29 @@ function redraw() {
     }
   });
 
+  if (placing && placing.boxIdx === null && placing.draft.length) {
+    // keypoints-first draft: dots + skeleton edges between visible draft points
+    const color = CLASS_COLORS[selectedClassIdx % CLASS_COLORS.length];
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    for (const [a, c] of project.skeleton) {
+      const ka = placing.draft[a], kb = placing.draft[c];
+      if (ka && kb && ka.v > 0 && kb.v > 0) {
+        const [ax, ay] = toCanvas(ka.x, ka.y);
+        const [bx, by] = toCanvas(kb.x, kb.y);
+        ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+      }
+    }
+    placing.draft.forEach((kp, ki) => {
+      if (kp.v === 0) return;
+      const [kx, ky] = toCanvas(kp.x, kp.y);
+      ctx.beginPath(); ctx.arc(kx, ky, 4, 0, Math.PI * 2);
+      ctx.fillStyle = color; ctx.fill();
+      ctx.font = '10px serif';
+      ctx.fillText(String(ki), kx + 6, ky - 4);
+    });
+  }
+
   if (drawing && drawStart && drawCurrent) {
     const x = Math.min(drawStart.x, drawCurrent.x);
     const y = Math.min(drawStart.y, drawCurrent.y);
@@ -219,6 +274,29 @@ function redraw() {
     ctx.setLineDash([6, 4]);
     ctx.strokeRect(x, y, w, h);
     ctx.setLineDash([]);
+  }
+
+  if (polyDraft && polyDraft.length) {
+    // in-progress polygon: dashed edges, rubber-band to cursor, first point ringed
+    const color = CLASS_COLORS[selectedClassIdx % CLASS_COLORS.length];
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    polyDraft.forEach(([nx, ny], pi) => {
+      const [px, py] = toCanvas(nx, ny);
+      pi ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    });
+    if (draftCursor) ctx.lineTo(draftCursor.x, draftCursor.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    polyDraft.forEach(([nx, ny], pi) => {
+      const [px, py] = toCanvas(nx, ny);
+      ctx.beginPath();
+      ctx.arc(px, py, pi === 0 ? 5 : 3.5, 0, Math.PI * 2);
+      if (pi === 0) { ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke(); }
+      else { ctx.fillStyle = color; ctx.fill(); }
+    });
   }
 }
 
@@ -248,11 +326,65 @@ function hitTestKeypoint(pos) {
   return null;
 }
 
+function polyBBox(pts) {
+  // normalized [[x,y],...] -> normalized center bbox
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const x1 = Math.min(...xs), x2 = Math.max(...xs);
+  const y1 = Math.min(...ys), y2 = Math.max(...ys);
+  return { x: (x1 + x2) / 2, y: (y1 + y2) / 2, w: Math.max(x2 - x1, 1e-9), h: Math.max(y2 - y1, 1e-9) };
+}
+
+function pointInPolygon(pos, canvasPts) {
+  // even-odd ray cast
+  let inside = false;
+  for (let i = 0, j = canvasPts.length - 1; i < canvasPts.length; j = i++) {
+    const [xi, yi] = canvasPts[i], [xj, yj] = canvasPts[j];
+    if ((yi > pos.y) !== (yj > pos.y) && pos.x < (xj - xi) * (pos.y - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+function hitTestPolygon(pos) {
+  for (let i = boxes.length - 1; i >= 0; i--) {
+    const b = boxes[i];
+    if (!b.polygon) continue;
+    if (pointInPolygon(pos, b.polygon.map(([nx, ny]) => toCanvas(nx, ny)))) return i;
+  }
+  return -1;
+}
+
+function hitTestVertex(pos) {
+  if (selectedBoxIdx < 0) return null;
+  const poly = boxes[selectedBoxIdx].polygon;
+  if (!poly) return null;
+  for (let i = poly.length - 1; i >= 0; i--) {
+    const [vx, vy] = toCanvas(poly[i][0], poly[i][1]);
+    if (Math.hypot(pos.x - vx, pos.y - vy) <= 8) return i;
+  }
+  return null;
+}
+
 function onMouseDown(e) {
   if (readOnly) return;
   const pos = getMousePos(e);
 
   if (placing) { placeKeypoint(pos); return; }
+
+  if (isSeg()) {
+    if (polyDraft) { addDraftPoint(pos); return; }
+    if (selectedBoxIdx >= 0) {
+      const vIdx = hitTestVertex(pos);
+      if (vIdx !== null) { draggingVert = { boxIdx: selectedBoxIdx, ptIdx: vIdx }; return; }
+    }
+    const hit = hitTestPolygon(pos);
+    if (hit >= 0) { selectedBoxIdx = hit; redraw(); return; }
+    // empty canvas: start a new polygon with this click
+    selectedBoxIdx = -1;
+    polyDraft = [];
+    draftCursor = pos;
+    addDraftPoint(pos);
+    return;
+  }
 
   if (isPose() && selectedBoxIdx >= 0) {
     const kpIdx = hitTestKeypoint(pos);
@@ -285,6 +417,15 @@ function onMouseMove(e) {
     redraw();
     return;
   }
+  if (draggingVert) {
+    const [nx, ny] = toNorm(pos.x, pos.y);
+    const b = boxes[draggingVert.boxIdx];
+    b.polygon[draggingVert.ptIdx] = [Math.min(1, Math.max(0, nx)), Math.min(1, Math.max(0, ny))];
+    Object.assign(b, polyBBox(b.polygon));
+    redraw();
+    return;
+  }
+  if (polyDraft) { draftCursor = pos; redraw(); }
   if (!drawing) return;
   drawCurrent = pos;
   redraw();
@@ -293,13 +434,25 @@ function onMouseMove(e) {
 function onMouseUp(e) {
   if (readOnly) return;
   if (draggingKp) { draggingKp = null; return; }
+  if (draggingVert) { draggingVert = null; return; }
   if (!drawing) return;
   drawing = false;
   const pos = getMousePos(e);
   const x1 = Math.min(drawStart.x, pos.x), y1 = Math.min(drawStart.y, pos.y);
   const x2 = Math.max(drawStart.x, pos.x), y2 = Math.max(drawStart.y, pos.y);
   const w = x2 - x1, h = y2 - y1;
-  if (w < 4 || h < 4) { redraw(); return; }
+  if (w < 4 || h < 4) {
+    // A click (not a drag) on empty canvas in pose mode starts keypoints-first
+    // placement: click the keypoints in order, the box is derived from them.
+    if (isPose()) {
+      placing = { boxIdx: null, nextKp: 0, draft: [] };
+      renderKpPanel();
+      placeKeypoint(pos);
+      return;
+    }
+    redraw();
+    return;
+  }
   const [nx1, ny1] = toNorm(x1, y1);
   const [nx2, ny2] = toNorm(x2, y2);
   const cls = project.classes[selectedClassIdx];
@@ -319,13 +472,31 @@ function onMouseUp(e) {
   redraw();
 }
 
+function kpsBBox(kps) {
+  // Derive the bbox from the visible keypoints; pad degenerate axes so w,h stay > 0
+  // and clamp the center so the box stays inside the image.
+  const vis = kps.filter(k => k.v > 0);
+  const xs = vis.map(k => k.x), ys = vis.map(k => k.y);
+  const w = Math.max(Math.max(...xs) - Math.min(...xs), 2e-3);
+  const h = Math.max(Math.max(...ys) - Math.min(...ys), 2e-3);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  return {
+    x: Math.min(1 - w / 2, Math.max(w / 2, cx)),
+    y: Math.min(1 - h / 2, Math.max(h / 2, cy)),
+    w, h,
+  };
+}
+
 function placeKeypoint(pos) {
-  const box = boxes[placing.boxIdx];
+  // boxIdx === null means keypoints-first placement: points collect in a draft
+  // and the box is derived from them once the last one is placed.
+  const target = placing.boxIdx === null ? placing.draft : boxes[placing.boxIdx].keypoints;
   if (placingVis === 0) {
-    box.keypoints.push({ x: 0, y: 0, v: 0 });
+    target.push({ x: 0, y: 0, v: 0 });
   } else {
     const [nx, ny] = toNorm(pos.x, pos.y);
-    box.keypoints.push({
+    target.push({
       x: Math.min(1, Math.max(0, nx)),
       y: Math.min(1, Math.max(0, ny)),
       v: placingVis,
@@ -333,6 +504,12 @@ function placeKeypoint(pos) {
   }
   placing.nextKp++;
   if (placing.nextKp >= project.keypoints.length) {
+    if (placing.boxIdx === null && placing.draft.some(k => k.v > 0)) {
+      const cls = project.classes[selectedClassIdx];
+      boxes.push({ class_id: cls.id, ...kpsBBox(placing.draft), keypoints: placing.draft, polygon: null });
+      selectedBoxIdx = boxes.length - 1;
+      updateBoxCount();
+    }
     placing = null;
     placingVis = 2;
   }
@@ -342,13 +519,61 @@ function placeKeypoint(pos) {
 
 function cancelPlacing() {
   if (!placing) return;
-  boxes.splice(placing.boxIdx, 1);
+  if (placing.boxIdx !== null) boxes.splice(placing.boxIdx, 1);
   placing = null;
   placingVis = 2;
   selectedBoxIdx = -1;
   updateBoxCount();
   renderKpPanel();
   redraw();
+}
+
+// --- segment mode: polygon draft -------------------------------------------
+
+function addDraftPoint(pos) {
+  // Clicking near the first point closes the polygon.
+  if (polyDraft.length >= 3) {
+    const [fx, fy] = toCanvas(polyDraft[0][0], polyDraft[0][1]);
+    if (Math.hypot(pos.x - fx, pos.y - fy) <= 10) { closeDraft(); return; }
+  }
+  const [nx, ny] = toNorm(pos.x, pos.y);
+  polyDraft.push([Math.min(1, Math.max(0, nx)), Math.min(1, Math.max(0, ny))]);
+  redraw();
+}
+
+function closeDraft() {
+  if (!polyDraft) return;
+  if (polyDraft.length >= 3) {
+    const cls = project.classes[selectedClassIdx];
+    if (cls) {
+      boxes.push({ class_id: cls.id, ...polyBBox(polyDraft), keypoints: null, polygon: polyDraft });
+      selectedBoxIdx = boxes.length - 1;
+    }
+  }
+  polyDraft = null;
+  draftCursor = null;
+  updateBoxCount();
+  redraw();
+}
+
+function cancelDraft() {
+  if (!polyDraft) return;
+  polyDraft = null;
+  draftCursor = null;
+  redraw();
+}
+
+function onDblClick(e) {
+  if (readOnly || !polyDraft) return;
+  const pos = getMousePos(e);
+  // The double-click's own clicks already added duplicate points — drop them.
+  while (polyDraft.length) {
+    const last = polyDraft[polyDraft.length - 1];
+    const [px, py] = toCanvas(last[0], last[1]);
+    if (Math.hypot(pos.x - px, pos.y - py) <= 10) polyDraft.pop();
+    else break;
+  }
+  closeDraft();
 }
 
 function onKeyDown(e) {
@@ -362,6 +587,7 @@ function onKeyDown(e) {
   }
   if (e.key === 'Delete' || e.key === 'Backspace') {
     if (placing) { cancelPlacing(); return; }
+    if (polyDraft) { cancelDraft(); return; }
     if (selectedBoxIdx >= 0 && selectedBoxIdx < boxes.length) {
       boxes.splice(selectedBoxIdx, 1);
       selectedBoxIdx = -1;
@@ -378,8 +604,10 @@ function onKeyDown(e) {
     return;
   }
   if (e.key === 's' || e.key === 'S') { save(); return; }
+  if (e.key === 'Enter') { if (polyDraft) { closeDraft(); return; } }
   if (e.key === 'Escape') {
     if (placing) { cancelPlacing(); return; }
+    if (polyDraft) { cancelDraft(); return; }
     selectedBoxIdx = -1; drawing = false; redraw();
   }
 }
@@ -390,6 +618,7 @@ async function save() {
   if (readOnly) return;
   hideErr(errMsg); okMsg.classList.add('hidden');
   if (placing) { showErr(errMsg, 'Finish or cancel the current keypoint placement first (Esc).'); return; }
+  if (polyDraft) { showErr(errMsg, 'Finish or cancel the current polygon first (Enter to close, Esc to cancel).'); return; }
   try {
     await API.put(`/api/images/${imageId}/annotations`, boxes);
     okMsg.textContent = `Saved ${boxes.length} instance(s).`;
@@ -402,6 +631,8 @@ async function clearAll() {
   boxes = [];
   selectedBoxIdx = -1;
   placing = null;
+  polyDraft = null;
+  draftCursor = null;
   if (isPose()) renderKpPanel();
   updateBoxCount();
   redraw();
