@@ -96,7 +96,11 @@
             <input type="number" id="jpegQuality" value="90" min="1" max="100" step="1" style="width:90px">
           </div>
         </details>
-        <button type="submit" class="btn btn-ghost-dark btn-sm">Upload &amp; Extract</button>
+        <button type="submit" class="btn btn-ghost-dark btn-sm" id="videoSubmitBtn">Upload &amp; Extract</button>
+        <div class="hidden" id="videoUploading" style="margin-top:12px;">
+          <div class="progress"><div class="progress-fill" id="videoUploadFill" style="width:0%"></div></div>
+          <p class="text-mute" style="font-size:12px;margin-top:4px;" id="videoUploadStatus">Uploading…</p>
+        </div>
         <p class="error hidden" id="videoErr"></p>
         <p class="success hidden" id="videoOk"></p>
       </form>

@@ -69,9 +69,14 @@ async function init() {
     } catch (err) { showErr(uploadErr, err.detail || 'Upload failed'); }
   };
 
-  // Video import
+  // Video import — the upload can run long (100fps videos are big), so it uses
+  // XHR for real upload progress instead of fetch (which reports none).
   const videoErr = document.getElementById('videoErr');
   const videoOk = document.getElementById('videoOk');
+  const videoBtn = document.getElementById('videoSubmitBtn');
+  const videoUploading = document.getElementById('videoUploading');
+  const videoUploadFill = document.getElementById('videoUploadFill');
+  const videoUploadStatus = document.getElementById('videoUploadStatus');
   document.getElementById('videoForm').onsubmit = async (e) => {
     e.preventDefault();
     hideErr(videoErr); videoOk.classList.add('hidden');
@@ -80,13 +85,26 @@ async function init() {
     const fd = new FormData();
     for (const f of files) fd.append('files', f);
     fd.append('params', JSON.stringify(videoParams()));
+    videoBtn.disabled = true;
+    videoUploading.classList.remove('hidden');
+    videoUploadFill.style.width = '0%';
     try {
-      const jobs = await API.post(`/api/projects/${projectId}/videos/upload`, fd, true);
+      const jobs = await uploadWithProgress(
+        `/api/projects/${projectId}/videos/upload`, fd,
+        (ratio) => {
+          const pct = Math.round(ratio * 100);
+          videoUploadFill.style.width = `${pct}%`;
+          videoUploadStatus.textContent = pct >= 100
+            ? 'Uploaded — starting extraction…'
+            : `Uploading… ${pct}%`;
+        });
       videoOk.textContent = `${jobs.length} video(s) queued for extraction.`;
       videoOk.classList.remove('hidden');
       document.getElementById('videoInput').value = '';
       loadVideoJobs();
     } catch (err) { showErr(videoErr, err.detail || 'Upload failed'); }
+    videoBtn.disabled = false;
+    videoUploading.classList.add('hidden');
   };
 
   // Members
@@ -222,6 +240,26 @@ async function releaseImage(imageId, e) {
     await API.post(`/api/projects/${projectId}/images/${imageId}/release`);
     await loadImages();
   } catch {}
+}
+
+// XHR-based upload with real progress (fetch cannot report upload progress).
+// Resolves with the parsed JSON body; rejects with { status, detail } like API.request.
+function uploadWithProgress(url, fd, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch {}
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject({ status: xhr.status, detail: data.detail || xhr.statusText || 'Upload failed' });
+    };
+    xhr.onerror = () => reject({ detail: 'Network error' });
+    xhr.send(fd);
+  });
 }
 
 // Video import — params from the advanced settings form (ceilings are % in the UI, 0..1 in the API)
