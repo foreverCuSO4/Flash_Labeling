@@ -61,22 +61,26 @@ async function init() {
     } catch (err) { showErr(createErr, err.detail || 'Failed'); }
   };
 
-  // Create from dataset.yaml (server-side path; structure only, no image import)
+  // Create from an uploaded dataset.yaml file
   const yamlErr = document.getElementById('yamlErr');
   document.getElementById('yamlForm').onsubmit = async (e) => {
     e.preventDefault();
     hideErr(yamlErr);
-    const body = { path: document.getElementById('yamlPath').value.trim() };
+    const file = document.getElementById('yamlFile').files[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('file', file);
     const name = document.getElementById('yamlName').value.trim();
-    if (name) body.name = name;
+    if (name) fd.append('name', name);
+    let proj;
     try {
-      const proj = await API.post('/api/projects/from-yaml', body);
-      document.getElementById('yamlPath').value = '';
-      document.getElementById('yamlName').value = '';
-      createPanel.classList.add('hidden');
-      loadProjects();
-      window.location.href = `/project.html?id=${proj.id}`;
-    } catch (err) { showErr(yamlErr, err.detail || 'Failed'); }
+      proj = await API.post('/api/projects/from-yaml', fd, true);
+    } catch (err) { showErr(yamlErr, err.detail || 'Failed'); return; }
+    document.getElementById('yamlFile').value = '';
+    document.getElementById('yamlName').value = '';
+    createPanel.classList.add('hidden');
+    loadProjects();
+    window.location.href = `/project.html?id=${proj.id}`;
   };
 
   loadProjects();

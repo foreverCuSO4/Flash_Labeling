@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, func, select
 
@@ -108,12 +108,6 @@ def create_project(body: ProjectIn, user: User = Depends(current_user), session:
     return project_out(session, project, membership)
 
 
-class YamlImportIn(BaseModel):
-    path: str  # dataset.yaml path on the server filesystem
-    name: str | None = None  # override the inferred project name
-    mode: str | None = None  # override the inferred annotation mode
-
-
 def _infer_mode_from_yaml(data: dict) -> str:
     task = str(data.get("task") or "").lower()
     fmt = str(data.get("annotation_format") or "").lower()
@@ -128,19 +122,19 @@ def _infer_mode_from_yaml(data: dict) -> str:
     return "detection"
 
 
-@router.post("/from-yaml")
-def create_project_from_yaml(body: YamlImportIn, user: User = Depends(current_user), session: Session = Depends(get_session)):
-    """Create a project skeleton (name, classes, mode) from a dataset.yaml on disk.
+def _create_from_yaml_data(
+    session: Session,
+    user: User,
+    data,
+    *,
+    fallback_name: str,
+    name_override: str | None,
+    mode_override: str | None,
+) -> dict:
+    """Create a project skeleton (name, classes, mode) from parsed dataset YAML.
 
     Images/labels are not imported — only the project structure.
     """
-    p = Path(body.path).expanduser()
-    if p.suffix.lower() not in (".yaml", ".yml") or not p.is_file():
-        raise HTTPException(400, f"not a readable YAML file: {body.path}")
-    try:
-        data = yaml.safe_load(p.read_text())
-    except yaml.YAMLError as e:
-        raise HTTPException(400, f"cannot parse YAML: {e}")
     if not isinstance(data, dict):
         raise HTTPException(400, "dataset YAML must be a mapping")
 
@@ -156,10 +150,10 @@ def create_project_from_yaml(body: YamlImportIn, user: User = Depends(current_us
     if not all(classes):
         raise HTTPException(400, "class names must be non-empty")
 
-    mode = body.mode or _infer_mode_from_yaml(data)
+    mode = mode_override or _infer_mode_from_yaml(data)
     if mode not in VALID_MODES:
         raise HTTPException(400, f"mode must be one of {sorted(VALID_MODES)}")
-    name = (body.name or "").strip() or str(data.get("dataset_name") or data.get("name") or p.parent.name)
+    name = (name_override or "").strip() or str(data.get("dataset_name") or data.get("name") or fallback_name)
 
     keypoints: list[str] = []
     if mode == "pose":
@@ -182,6 +176,42 @@ def create_project_from_yaml(body: YamlImportIn, user: User = Depends(current_us
     session.commit()
     membership = get_membership(session, project.id, user.id)
     return project_out(session, project, membership)
+
+
+def _parse_yaml_bytes(raw: bytes) -> dict:
+    try:
+        return yaml.safe_load(raw)
+    except yaml.YAMLError as e:
+        raise HTTPException(400, f"cannot parse YAML: {e}")
+
+
+_MAX_YAML_BYTES = 1 << 20  # 1 MiB is generous for a dataset.yaml
+
+
+@router.post("/from-yaml")
+async def create_project_from_yaml(
+    file: UploadFile,
+    name: str = Form(""),
+    mode: str = Form(""),
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Create a project skeleton from a dataset.yaml uploaded from the browser."""
+    filename = file.filename or "dataset.yaml"
+    if Path(filename).suffix.lower() not in (".yaml", ".yml"):
+        raise HTTPException(400, f"not a YAML file: {filename}")
+    raw = await file.read(_MAX_YAML_BYTES + 1)
+    if not raw:
+        raise HTTPException(400, "empty file")
+    if len(raw) > _MAX_YAML_BYTES:
+        raise HTTPException(400, "YAML file too large")
+    data = _parse_yaml_bytes(raw)
+    return _create_from_yaml_data(
+        session, user, data,
+        fallback_name=Path(filename).stem,
+        name_override=name or None,
+        mode_override=mode or None,
+    )
 
 
 @router.get("/{project_id}")

@@ -56,7 +56,7 @@ python scripts/smoke_test.py http://host:port # against remote
   - `detection` — bounding boxes
   - `pose` — box + keypoints (visibility 0/1/2), exported as YOLO pose format
   - `segment` — click-point polygons (vertex drag editing), exported as YOLO segment format
-- Create projects manually or **from a dataset.yaml** on the server — classes and mode are inferred (`kpt_shape` → pose with auto-named keypoints; polygon-style `annotation_format`/`task` → segment; otherwise detection); images are not imported
+- Create projects manually or **by uploading a dataset.yaml** — classes and mode are inferred (`kpt_shape` → pose with auto-named keypoints; polygon-style `annotation_format`/`task` → segment; otherwise detection); images are not imported
 - Multi-user claiming: images are read-only until claimed; batch-claim N images at once from the project page; a claim is exclusive and auto-expires after 24h if the image is still unlabeled; "My Claims" tab to review/release your claims; per-member stats (labeled / currently claiming)
 - All projects are visible to every registered user; guests can browse images and annotations read-only, and join any project from its page to start claiming and annotating
 - Canvas: draw, select, delete; drag keypoints; keyboard shortcuts
