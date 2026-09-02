@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 
 from ..db import get_session
 from ..models import Annotation, Image, Project, ProjectClass, User
-from ..security import current_user, require_member
+from ..security import current_user, require_member, require_viewer
 from .images import claim_expired
 
 router = APIRouter(tags=["annotations"])
@@ -69,7 +69,7 @@ def ann_out(a: Annotation, cls: ProjectClass) -> dict:
 @router.get("/api/images/{image_id}/annotations")
 def list_annotations(image_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)):
     img = _get_image_checked(image_id, session)
-    require_member(img.project_id, user, session)
+    require_viewer(img.project_id, user, session)
     anns = session.exec(select(Annotation).where(Annotation.image_id == image_id)).all()
     out = []
     for a in anns:

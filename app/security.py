@@ -63,6 +63,15 @@ def get_membership(session: Session, project_id: int, user_id: int) -> Optional[
     ).first()
 
 
+def require_viewer(project_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    """Any logged-in user may view a project; membership may be None."""
+    project = session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "project not found")
+    membership = get_membership(session, project_id, user.id)
+    return project, membership
+
+
 def require_member(project_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
     project = session.get(Project, project_id)
     if project is None:

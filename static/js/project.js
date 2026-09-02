@@ -5,6 +5,7 @@ let project = null;
 let allImages = [];
 let currentFilter = 'all';
 let currentTab = 'browse';
+let isMember = false;
 
 async function init() {
   if (!projectId) { window.location.href = '/projects.html'; return; }
@@ -16,8 +17,9 @@ async function init() {
   };
 
   try { project = await API.get(`/api/projects/${projectId}`); } catch { window.location.href = '/projects.html'; return; }
+  isMember = project.role !== null;
   document.getElementById('projName').textContent = project.name;
-  document.getElementById('projRole').textContent = `${project.role} · ${project.mode}`;
+  document.getElementById('projRole').textContent = `${project.role || 'guest'} · ${project.mode}`;
   document.getElementById('projMeta').textContent =
     `${project.classes.map(c => c.name).join(' · ') || 'No classes'} — ${project.labeled_count}/${project.image_count} labeled`;
   document.getElementById('exportBtn').href = `/api/projects/${projectId}/export`;
@@ -25,6 +27,24 @@ async function init() {
   if (project.guidelines) {
     document.getElementById('guidelinesPanel').classList.remove('hidden');
     document.getElementById('guidelinesView').innerHTML = marked.parse(project.guidelines);
+  }
+
+  if (!isMember) {
+    // Guest view: read-only until they join.
+    document.getElementById('joinPanel').classList.remove('hidden');
+    document.getElementById('joinBtn').onclick = async () => {
+      const errEl = document.getElementById('joinErr');
+      hideErr(errEl);
+      try {
+        await API.post(`/api/projects/${projectId}/join`);
+        window.location.reload();
+      } catch (err) { showErr(errEl, err.detail || 'Join failed'); }
+    };
+    document.getElementById('uploadPanel').classList.add('hidden');
+    document.getElementById('claimPanel').classList.add('hidden');
+    document.getElementById('tabMine').classList.add('hidden');
+    document.getElementById('settingsBtn').classList.add('hidden');
+    document.getElementById('exportBtn').classList.add('hidden');
   }
 
   // Upload
@@ -89,7 +109,7 @@ function setTab(tab) {
   document.getElementById('tabBrowse').classList.toggle('tab-active', tab === 'browse');
   document.getElementById('tabMine').classList.toggle('tab-active', tab === 'mine');
   document.getElementById('tabStats').classList.toggle('tab-active', tab === 'stats');
-  document.getElementById('claimPanel').classList.toggle('hidden', tab !== 'browse');
+  document.getElementById('claimPanel').classList.toggle('hidden', tab !== 'browse' || !isMember);
   document.getElementById('browseControls').classList.toggle('hidden', tab !== 'browse');
   document.getElementById('imageGrid').classList.toggle('hidden', tab === 'stats');
   document.getElementById('statsPanel').classList.toggle('hidden', tab !== 'stats');

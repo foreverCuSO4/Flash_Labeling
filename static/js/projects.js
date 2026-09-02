@@ -72,7 +72,7 @@ async function loadProjects() {
     emptyMsg.classList.toggle('hidden', projects.length > 0);
     list.innerHTML = projects.map(p => `
       <div class="panel" style="cursor:pointer" onclick="window.location.href='/project.html?id=${p.id}'">
-        <p class="micro-cap">${esc(p.role)}</p>
+        <p class="micro-cap">${esc(p.role || 'view')}</p>
         <h3 style="font-family:var(--font-display);font-size:24px;text-transform:uppercase;letter-spacing:0.96px;">${esc(p.name)}</h3>
         <p class="text-mute mt-2"><span class="badge">${p.mode}</span> ${p.classes.map(c => esc(c.name)).join(' · ') || 'No classes'}</p>
         <p class="text-mute mt-2" style="font-size:13px;">${p.labeled_count}/${p.image_count} labeled</p>

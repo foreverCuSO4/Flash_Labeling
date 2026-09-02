@@ -6,7 +6,7 @@ from sqlmodel import Session, func, select
 
 from ..db import get_session
 from ..models import Annotation, Image, Project, ProjectClass, ProjectMember, User
-from ..security import current_user, get_membership, require_member, require_owner
+from ..security import current_user, get_membership, require_member, require_owner, require_viewer
 from .images import claim_expired
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -43,7 +43,7 @@ class MemberIn(BaseModel):
     email: str
 
 
-def project_out(session: Session, project: Project, membership: ProjectMember) -> dict:
+def project_out(session: Session, project: Project, membership: ProjectMember | None) -> dict:
     classes = session.exec(
         select(ProjectClass).where(ProjectClass.project_id == project.id).order_by(ProjectClass.ord)
     ).all()
@@ -57,7 +57,7 @@ def project_out(session: Session, project: Project, membership: ProjectMember) -
         "id": project.id,
         "name": project.name,
         "owner_id": project.owner_id,
-        "role": membership.role,
+        "role": membership.role if membership else None,
         "mode": project.mode,
         "guidelines": project.guidelines,
         "keypoints": json.loads(project.keypoints or "[]"),
@@ -71,13 +71,12 @@ def project_out(session: Session, project: Project, membership: ProjectMember) -
 
 @router.get("")
 def list_projects(user: User = Depends(current_user), session: Session = Depends(get_session)):
-    memberships = session.exec(select(ProjectMember).where(ProjectMember.user_id == user.id)).all()
-    out = []
-    for m in memberships:
-        project = session.get(Project, m.project_id)
-        if project:
-            out.append(project_out(session, project, m))
-    return out
+    # All projects are visible to every logged-in user; role marks membership.
+    projects = session.exec(select(Project).order_by(Project.id)).all()
+    memberships = {m.project_id: m for m in session.exec(
+        select(ProjectMember).where(ProjectMember.user_id == user.id)
+    ).all()}
+    return [project_out(session, p, memberships.get(p.id)) for p in projects]
 
 
 @router.post("")
@@ -108,8 +107,21 @@ def create_project(body: ProjectIn, user: User = Depends(current_user), session:
 
 
 @router.get("/{project_id}")
-def get_project(project_id: int, deps=Depends(require_member), session: Session = Depends(get_session)):
+def get_project(project_id: int, deps=Depends(require_viewer), session: Session = Depends(get_session)):
     project, membership = deps
+    return project_out(session, project, membership)
+
+
+@router.post("/{project_id}/join")
+def join_project(project_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    project = session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "project not found")
+    if get_membership(session, project_id, user.id):
+        raise HTTPException(409, "already a member")
+    membership = ProjectMember(project_id=project_id, user_id=user.id, role="annotator")
+    session.add(membership)
+    session.commit()
     return project_out(session, project, membership)
 
 
@@ -239,7 +251,7 @@ def delete_class(project_id: int, class_id: int, deps=Depends(require_owner), se
 
 
 @router.get("/{project_id}/members")
-def list_members(project_id: int, deps=Depends(require_member), session: Session = Depends(get_session)):
+def list_members(project_id: int, deps=Depends(require_viewer), session: Session = Depends(get_session)):
     members = session.exec(select(ProjectMember).where(ProjectMember.project_id == project_id)).all()
     out = []
     for m in members:
@@ -250,7 +262,7 @@ def list_members(project_id: int, deps=Depends(require_member), session: Session
 
 
 @router.get("/{project_id}/stats")
-def project_stats(project_id: int, deps=Depends(require_member), session: Session = Depends(get_session)):
+def project_stats(project_id: int, deps=Depends(require_viewer), session: Session = Depends(get_session)):
     """Per-member progress: images labeled by each user and their active claims."""
     members = session.exec(select(ProjectMember).where(ProjectMember.project_id == project_id)).all()
     images = session.exec(select(Image).where(Image.project_id == project_id)).all()

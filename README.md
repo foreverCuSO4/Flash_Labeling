@@ -56,6 +56,7 @@ python scripts/smoke_test.py http://host:port # against remote
   - `detection` — bounding boxes
   - `pose` — box + keypoints (visibility 0/1/2), exported as YOLO pose format
 - Multi-user claiming: images are read-only until claimed; batch-claim N images at once from the project page; a claim is exclusive and auto-expires after 24h if the image is still unlabeled; "My Claims" tab to review/release your claims; per-member stats (labeled / currently claiming)
+- All projects are visible to every registered user; guests can browse images and annotations read-only, and join any project from its page to start claiming and annotating
 - Canvas: draw, select, delete; drag keypoints; keyboard shortcuts
 - YOLO export: zip with `images/`, `labels/`, `classes.txt`, `data.yaml` (includes `kpt_shape` for pose)
 - Lightweight DB migrations on startup (old databases keep working)

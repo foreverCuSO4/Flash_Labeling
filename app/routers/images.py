@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 from ..config import UPLOAD_DIR
 from ..db import get_session
 from ..models import Annotation, Image, Project, ProjectClass, User
-from ..security import current_user, require_member
+from ..security import current_user, require_member, require_viewer
 
 router = APIRouter(prefix="/api/projects/{project_id}/images", tags=["images"])
 
@@ -73,7 +73,7 @@ def save_upload(file: UploadFile, project_id: int) -> tuple[str, int, int, str]:
 
 
 @router.get("")
-def list_images(project_id: int, deps=Depends(require_member), session: Session = Depends(get_session)):
+def list_images(project_id: int, deps=Depends(require_viewer), session: Session = Depends(get_session)):
     images = session.exec(
         select(Image).where(Image.project_id == project_id).order_by(Image.id)
     ).all()

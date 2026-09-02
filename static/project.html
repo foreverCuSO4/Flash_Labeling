@@ -27,13 +27,21 @@
     </div>
     <p class="text-mute mb-4" id="projMeta"></p>
 
+    <div class="panel mb-4 hidden" id="joinPanel">
+      <div class="row-between">
+        <p class="text-mute">You are viewing this project as a guest. Join to claim and annotate images.</p>
+        <button class="btn btn-ghost-dark btn-sm" id="joinBtn">Join Project</button>
+      </div>
+      <p class="error hidden" id="joinErr"></p>
+    </div>
+
     <div class="panel mb-4 hidden" id="guidelinesPanel">
       <h2 class="micro-cap mb-2">Annotation Guidelines</h2>
       <div class="md-preview" id="guidelinesView"></div>
     </div>
 
     <div class="grid-2 mb-4">
-      <div class="panel">
+      <div class="panel" id="uploadPanel">
         <h2 class="micro-cap mb-2">Upload Images</h2>
         <form id="uploadForm">
           <input type="file" id="fileInput" multiple accept="image/*" style="margin-bottom:12px;">

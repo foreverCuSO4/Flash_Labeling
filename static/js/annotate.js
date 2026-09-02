@@ -68,12 +68,18 @@ async function init() {
 }
 
 function applyReadOnly() {
-  readOnly = !(imageMeta.claimed_by === currentUser.id && !imageMeta.claim_expired);
+  const isMember = project.role !== null;
+  readOnly = !isMember || !(imageMeta.claimed_by === currentUser.id && !imageMeta.claim_expired);
   document.getElementById('saveBtn').classList.toggle('hidden', readOnly);
   document.getElementById('clearBtn').classList.toggle('hidden', readOnly);
   document.getElementById('releaseBtn').classList.toggle('hidden', readOnly);
   document.getElementById('roBanner').classList.toggle('hidden', !readOnly);
-  document.getElementById('claimThisBtn').classList.toggle('hidden', !readOnly);
+  if (readOnly) {
+    document.getElementById('roBanner').textContent = isMember
+      ? 'Read only — claim this image to annotate it.'
+      : 'Not a member — join the project from its page to annotate.';
+  }
+  document.getElementById('claimThisBtn').classList.toggle('hidden', !readOnly || !isMember);
 }
 
 async function claimThis() {
