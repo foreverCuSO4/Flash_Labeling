@@ -377,3 +377,17 @@ textarea:focus { outline: 1px solid var(--on-primary); }
   color: var(--on-primary-mute);
   margin: 8px 0;
 }
+
+/* Video import — jobs list & progress bar */
+#videoAdvanced summary { cursor: pointer; }
+#videoJobs:not(:empty) { margin-top: 16px; }
+.video-job { margin-top: 12px; border-top: 1px solid var(--hairline-dark); padding-top: 12px; }
+.video-job:first-child { margin-top: 0; border-top: none; padding-top: 0; }
+.progress {
+  height: 8px;
+  background: var(--canvas-light);
+  border: 1px solid var(--hairline-light);
+  border-radius: var(--rounded-pill);
+  overflow: hidden;
+}
+.progress-fill { height: 100%; background: var(--ink); }

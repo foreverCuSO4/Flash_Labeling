@@ -6,6 +6,8 @@ let allImages = [];
 let currentFilter = 'all';
 let currentTab = 'browse';
 let isMember = false;
+let videoJobs = null;
+let videoPollTimer = null;
 
 async function init() {
   if (!projectId) { window.location.href = '/projects.html'; return; }
@@ -41,6 +43,7 @@ async function init() {
       } catch (err) { showErr(errEl, err.detail || 'Join failed'); }
     };
     document.getElementById('uploadPanel').classList.add('hidden');
+    document.getElementById('videoPanel').classList.add('hidden');
     document.getElementById('claimPanel').classList.add('hidden');
     document.getElementById('tabMine').classList.add('hidden');
     document.getElementById('settingsBtn').classList.add('hidden');
@@ -64,6 +67,26 @@ async function init() {
       document.getElementById('fileInput').value = '';
       loadImages();
     } catch (err) { showErr(uploadErr, err.detail || 'Upload failed'); }
+  };
+
+  // Video import
+  const videoErr = document.getElementById('videoErr');
+  const videoOk = document.getElementById('videoOk');
+  document.getElementById('videoForm').onsubmit = async (e) => {
+    e.preventDefault();
+    hideErr(videoErr); videoOk.classList.add('hidden');
+    const files = document.getElementById('videoInput').files;
+    if (!files.length) return;
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f);
+    fd.append('params', JSON.stringify(videoParams()));
+    try {
+      const jobs = await API.post(`/api/projects/${projectId}/videos/upload`, fd, true);
+      videoOk.textContent = `${jobs.length} video(s) queued for extraction.`;
+      videoOk.classList.remove('hidden');
+      document.getElementById('videoInput').value = '';
+      loadVideoJobs();
+    } catch (err) { showErr(videoErr, err.detail || 'Upload failed'); }
   };
 
   // Members
@@ -102,6 +125,7 @@ async function init() {
   document.getElementById('claimBtn').onclick = claimBatch;
 
   loadImages();
+  loadVideoJobs();
 }
 
 function setTab(tab) {
@@ -197,6 +221,77 @@ async function releaseImage(imageId, e) {
   try {
     await API.post(`/api/projects/${projectId}/images/${imageId}/release`);
     await loadImages();
+  } catch {}
+}
+
+// Video import — params from the advanced settings form (ceilings are % in the UI, 0..1 in the API)
+function videoParams() {
+  const num = (id, fallback) => {
+    const v = parseFloat(document.getElementById(id).value);
+    return Number.isFinite(v) ? v : fallback;
+  };
+  return {
+    tiers: [
+      [num('tierCeil0', 0.5) / 100, num('tierInt0', 10)],
+      [num('tierCeil1', 2) / 100, num('tierInt1', 5)],
+      [num('tierCeil2', 8) / 100, num('tierInt2', 1)],
+      [null, num('tierInt3', 0.2)],
+    ],
+    min_interval: num('minInterval', 0.1),
+    max_interval: num('maxInterval', 30),
+    max_frames: Math.round(num('maxFrames', 5000)),
+    jpeg_quality: Math.round(num('jpegQuality', 90)),
+  };
+}
+
+async function loadVideoJobs() {
+  try {
+    const prevDone = new Set((videoJobs || []).filter(j => j.status === 'done').map(j => j.id));
+    const jobs = await API.get(`/api/projects/${projectId}/videos`);
+    const newlyDone = videoJobs !== null && jobs.some(j => j.status === 'done' && !prevDone.has(j.id));
+    videoJobs = jobs;
+    renderVideoJobs();
+    if (newlyDone) loadImages();
+    const active = jobs.some(j => j.status === 'pending' || j.status === 'running' || j.cancel_requested);
+    if (active && !videoPollTimer) {
+      videoPollTimer = setInterval(loadVideoJobs, 1500);
+    } else if (!active && videoPollTimer) {
+      clearInterval(videoPollTimer);
+      videoPollTimer = null;
+    }
+  } catch {}
+}
+
+function renderVideoJobs() {
+  const el = document.getElementById('videoJobs');
+  el.innerHTML = (videoJobs || []).map(j => {
+    const running = j.status === 'pending' || j.status === 'running';
+    const pct = Math.min(100, Math.round((j.progress || 0) * 100));
+    const decoded = j.total_frames ? Math.round((j.progress || 0) * j.total_frames) : 0;
+    const stats = j.total_frames
+      ? `${decoded.toLocaleString()} / ${j.total_frames.toLocaleString()} frames decoded · ${(j.extracted_frames || 0).toLocaleString()} extracted`
+      : `${(j.extracted_frames || 0).toLocaleString()} extracted`;
+    const cancelBtn = running && !j.cancel_requested
+      ? `<button class="btn btn-ghost-dark btn-sm" onclick="cancelVideoJob(${j.id})">Cancel</button>` : '';
+    const cancelling = running && j.cancel_requested
+      ? `<span class="text-mute" style="font-size:12px">cancelling…</span>` : '';
+    return `
+      <div class="video-job">
+        <div class="row-between">
+          <span style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(j.filename)}</span>
+          <span class="row" style="gap:12px">${cancelling}${cancelBtn}<span class="micro-cap">${esc(j.status)}</span></span>
+        </div>
+        <div class="progress" style="margin-top:8px;"><div class="progress-fill" style="width:${pct}%"></div></div>
+        <p class="text-mute" style="font-size:12px;margin-top:4px;">${stats}</p>
+        ${j.status === 'failed' && j.error ? `<p class="error">${esc(j.error)}</p>` : ''}
+      </div>`;
+  }).join('');
+}
+
+async function cancelVideoJob(jobId) {
+  try {
+    await API.post(`/api/projects/${projectId}/videos/${jobId}/cancel`);
+    loadVideoJobs();
   } catch {}
 }
 

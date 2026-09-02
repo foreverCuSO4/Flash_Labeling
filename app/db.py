@@ -4,10 +4,16 @@ from .config import DATA_DIR, DB_PATH
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "uploads").mkdir(parents=True, exist_ok=True)
+(DATA_DIR / "videos").mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "avatars").mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "exports").mkdir(parents=True, exist_ok=True)
 
-engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
+engine = create_engine(
+    f"sqlite:///{DB_PATH}",
+    # timeout: video workers commit progress from a background thread while
+    # request threads read/write — wait on locks instead of erroring out.
+    connect_args={"check_same_thread": False, "timeout": 30},
+)
 
 
 def init_db() -> None:

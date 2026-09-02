@@ -58,6 +58,23 @@ class Image(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
 
 
+class VideoJob(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    filename: str  # original video filename
+    stored_name: str  # unique name on disk under VIDEO_DIR/<project_id>/; videos are kept
+    status: str = Field(default="pending", index=True)  # pending | running | done | failed | cancelled
+    cancel_requested: bool = False
+    progress: float = 0.0  # 0..1 decode progress
+    params: str = Field(default="{}")  # JSON sampling params (see app/video.py)
+    fps: float = 0.0
+    total_frames: int = 0
+    extracted_frames: int = 0
+    error: Optional[str] = None
+    created_by: int = Field(foreign_key="user.id")
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class Annotation(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     image_id: int = Field(foreign_key="image.id", index=True)

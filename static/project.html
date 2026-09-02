@@ -61,6 +61,48 @@
       </div>
     </div>
 
+    <div class="panel mb-4" id="videoPanel">
+      <h2 class="micro-cap mb-2">Import from Video</h2>
+      <form id="videoForm">
+        <input type="file" id="videoInput" multiple accept="video/*,.mkv,.avi,.mov,.m4v,.webm" style="margin-bottom:12px;">
+        <details class="mb-2" id="videoAdvanced">
+          <summary class="micro-cap">Advanced sampling settings</summary>
+          <table class="mt-2">
+            <tr>
+              <td>motion below <input type="number" id="tierCeil0" value="0.5" min="0" step="0.1" style="width:80px"> %</td>
+              <td>&rarr; 1 frame every <input type="number" id="tierInt0" value="10" min="0" step="0.1" style="width:80px"> s</td>
+            </tr>
+            <tr>
+              <td>motion below <input type="number" id="tierCeil1" value="2" min="0" step="0.1" style="width:80px"> %</td>
+              <td>&rarr; 1 frame every <input type="number" id="tierInt1" value="5" min="0" step="0.1" style="width:80px"> s</td>
+            </tr>
+            <tr>
+              <td>motion below <input type="number" id="tierCeil2" value="8" min="0" step="0.1" style="width:80px"> %</td>
+              <td>&rarr; 1 frame every <input type="number" id="tierInt2" value="1" min="0" step="0.1" style="width:80px"> s</td>
+            </tr>
+            <tr>
+              <td class="text-mute">otherwise</td>
+              <td>&rarr; 1 frame every <input type="number" id="tierInt3" value="0.2" min="0" step="0.1" style="width:80px"> s</td>
+            </tr>
+          </table>
+          <div class="row mt-2" style="flex-wrap:wrap">
+            <span class="text-mute" style="font-size:12px">min interval (s)</span>
+            <input type="number" id="minInterval" value="0.1" min="0" step="0.1" style="width:90px">
+            <span class="text-mute" style="font-size:12px">max interval (s)</span>
+            <input type="number" id="maxInterval" value="30" min="0" step="0.1" style="width:90px">
+            <span class="text-mute" style="font-size:12px">max frames</span>
+            <input type="number" id="maxFrames" value="5000" min="1" step="1" style="width:90px">
+            <span class="text-mute" style="font-size:12px">jpeg quality</span>
+            <input type="number" id="jpegQuality" value="90" min="1" max="100" step="1" style="width:90px">
+          </div>
+        </details>
+        <button type="submit" class="btn btn-ghost-dark btn-sm">Upload &amp; Extract</button>
+        <p class="error hidden" id="videoErr"></p>
+        <p class="success hidden" id="videoOk"></p>
+      </form>
+      <div id="videoJobs"></div>
+    </div>
+
     <div class="row-between mb-2">
       <div class="row">
         <button class="btn btn-ghost-dark btn-sm tab tab-active" id="tabBrowse">Browse</button>
