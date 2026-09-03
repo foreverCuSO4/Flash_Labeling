@@ -320,3 +320,34 @@ class TestExport:
         label_files = [n for n in zf.namelist() if n.startswith("labels/")]
         assert len(label_files) == 1
         assert zf.read(label_files[0]).decode().strip() == ""
+
+
+class TestDeleteBatch:
+    def test_owner_deletes_selected(self, client, project):
+        imgs = [_upload(client, project["id"], f"t{i}.png") for i in range(3)]
+        ids = [i["id"] for i in imgs]
+        stored = {i["id"]: i["url"].split("?v=")[1] for i in imgs}
+        # Annotate the first image so annotation cleanup is exercised too.
+        _claim(client, project["id"], ids[0])
+        client.put(f"/api/images/{ids[0]}/annotations",
+                   json=[{"class_id": 1, "x": 0.5, "y": 0.5, "w": 0.2, "h": 0.2}])
+        r = client.post(f"/api/projects/{project['id']}/images/delete-batch",
+                        json={"ids": [ids[0], ids[1], 99999]})
+        assert r.status_code == 200, r.text
+        assert r.json()["deleted"] == 2  # unknown ids are ignored
+        remaining = client.get(f"/api/projects/{project['id']}/images").json()
+        assert [i["id"] for i in remaining] == [ids[2]]
+        assert client.get(f"/api/images/{ids[0]}/annotations").status_code == 404
+        from app.config import UPLOAD_DIR
+        up = UPLOAD_DIR / str(project["id"])
+        assert not (up / stored[ids[0]]).exists()
+        assert not (up / stored[ids[1]]).exists()
+        assert (up / stored[ids[2]]).exists()
+
+    def test_delete_batch_owner_only(self, client, alice, bob, project):
+        img = _upload(client, project["id"])
+        _add_bob(client, project)
+        _login(client, "bob@test.com", "pass456")
+        r = client.post(f"/api/projects/{project['id']}/images/delete-batch",
+                        json={"ids": [img["id"]]})
+        assert r.status_code == 403

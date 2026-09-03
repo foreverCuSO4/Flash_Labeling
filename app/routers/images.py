@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 from ..config import UPLOAD_DIR
 from ..db import get_session
 from ..models import Annotation, Image, Project, ProjectClass, User
-from ..security import current_user, require_member, require_viewer
+from ..security import current_user, require_member, require_owner, require_viewer
 
 router = APIRouter(prefix="/api/projects/{project_id}/images", tags=["images"])
 
@@ -21,6 +21,10 @@ CLAIM_TIMEOUT_HOURS = 24
 
 class ClaimBatchIn(BaseModel):
     count: int = Field(ge=1, le=500)
+
+
+class DeleteBatchIn(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=2000)
 
 
 def claim_expired(img: Image) -> bool:
@@ -173,20 +177,27 @@ def release_image(
     return image_out(img, session)
 
 
-@router.delete("/{image_id}")
-def delete_image(
-    project_id: int, image_id: int,
-    deps=Depends(require_member),
-    session: Session = Depends(get_session),
-):
-    img = session.get(Image, image_id)
-    if img is None or img.project_id != project_id:
-        raise HTTPException(404, "image not found")
-    for ann in session.exec(select(Annotation).where(Annotation.image_id == image_id)).all():
+def _delete_image(img: Image, session: Session) -> None:
+    for ann in session.exec(select(Annotation).where(Annotation.image_id == img.id)).all():
         session.delete(ann)
-    file_path = UPLOAD_DIR / str(project_id) / img.stored_name
+    file_path = UPLOAD_DIR / str(img.project_id) / img.stored_name
     if file_path.exists():
         file_path.unlink()
     session.delete(img)
+
+
+@router.post("/delete-batch")
+def delete_images_batch(
+    project_id: int,
+    body: DeleteBatchIn,
+    deps=Depends(require_owner),
+    session: Session = Depends(get_session),
+):
+    """Owner-only bulk delete: rows, annotations and files of the selected images."""
+    images = session.exec(
+        select(Image).where(Image.project_id == project_id, Image.id.in_(body.ids))
+    ).all()
+    for img in images:
+        _delete_image(img, session)
     session.commit()
-    return {"ok": True}
+    return {"deleted": len(images)}

@@ -87,8 +87,29 @@ async function init() {
   }, { passive: false });
   document.getElementById('claimBtn').onclick = claimBatch;
 
+  // Dataset management (owner only, browse tab)
+  if (project.role === 'owner') {
+    const manageBtn = document.getElementById('manageBtn');
+    manageBtn.classList.remove('hidden');
+    manageBtn.onclick = () => enterManage();
+    document.getElementById('manageExit').onclick = () => exitManage();
+    document.getElementById('manageSelectAll').onclick = () => {
+      visibleImages().forEach(i => selected.add(i.id));
+      renderImages();
+    };
+    document.getElementById('manageClear').onclick = () => { selected.clear(); renderImages(); };
+    document.getElementById('manageDelete').onclick = deleteSelected;
+  }
+
+  // Card clicks: navigate normally, or toggle selection while managing.
+  document.getElementById('imageGrid').addEventListener('click', (e) => {
+    const card = e.target.closest('.thumb-card');
+    if (!card) return;
+    if (manageOn) { toggleSelect(parseInt(card.dataset.id)); return; }
+    openImage(parseInt(card.dataset.id));
+  });
+
   loadImages();
-  loadVideoJobs();
 }
 
 function setTab(tab) {
@@ -101,7 +122,41 @@ function setTab(tab) {
   document.getElementById('imageGrid').classList.toggle('hidden', tab === 'stats');
   document.getElementById('statsPanel').classList.toggle('hidden', tab !== 'stats');
   if (tab === 'stats') loadStats();
+  if (tab !== 'browse' && manageOn) exitManage();
   renderImages();
+}
+
+function enterManage() {
+  manageOn = true;
+  selected.clear();
+  document.getElementById('manageBar').classList.remove('hidden');
+  document.getElementById('filterUnlabeled').disabled = false;
+  renderImages();
+}
+
+function exitManage() {
+  manageOn = false;
+  selected.clear();
+  document.getElementById('manageBar').classList.add('hidden');
+  renderImages();
+}
+
+function toggleSelect(id) {
+  if (selected.has(id)) selected.delete(id);
+  else selected.add(id);
+  renderImages();
+}
+
+async function deleteSelected() {
+  if (!selected.size) return;
+  if (!confirm(`Delete ${selected.size} selected image(s) and all their annotations? This cannot be undone.`)) return;
+  const errEl = document.getElementById('manageErr');
+  hideErr(errEl);
+  try {
+    await API.post(`/api/projects/${projectId}/images/delete-batch`, { ids: [...selected] });
+    selected.clear();
+    await loadImages();
+  } catch (err) { showErr(errEl, err.detail || 'Delete failed'); }
 }
 
 async function loadMembers() {
@@ -116,6 +171,12 @@ async function loadMembers() {
 function isClaimed(img) { return img.claimed_by && !img.claim_expired; }
 function isMine(img) { return img.claimed_by === currentUser.id && !img.claim_expired; }
 function isAvailable(img) { return img.status === 'unlabeled' && !isClaimed(img); }
+
+function visibleImages() {
+  if (currentTab === 'mine') return allImages.filter(i => isMine(i) && i.status === 'unlabeled');
+  if (currentFilter === 'unlabeled') return allImages.filter(i => i.status === 'unlabeled');
+  return allImages;
+}
 
 async function loadImages() {
   try {
@@ -133,14 +194,12 @@ async function loadImages() {
 function renderImages() {
   const grid = document.getElementById('imageGrid');
   const empty = document.getElementById('emptyImages');
-  let filtered = allImages;
-  if (currentTab === 'mine') {
-    filtered = allImages.filter(i => isMine(i) && i.status === 'unlabeled');
-  } else if (currentFilter === 'unlabeled') {
-    filtered = allImages.filter(i => i.status === 'unlabeled');
-  }
+  const filtered = visibleImages();
   empty.textContent = currentTab === 'mine' ? 'No active claims.' : 'No images uploaded yet.';
   empty.classList.toggle('hidden', filtered.length > 0 || currentTab === 'stats');
+  if (manageOn) {
+    document.getElementById('manageCount').textContent = `${selected.size} selected`;
+  }
   grid.innerHTML = filtered.map(img => {
     const claimed = isClaimed(img);
     const mine = isMine(img);
@@ -149,8 +208,11 @@ function renderImages() {
     const releaseBtn = currentTab === 'mine'
       ? `<button class="btn btn-ghost-dark btn-sm thumb-release" onclick="releaseImage(${img.id}, event)">Release</button>`
       : '';
+    const selectedClass = manageOn && selected.has(img.id) ? ' thumb-selected' : '';
+    const check = manageOn ? `<span class="thumb-check">${selected.has(img.id) ? '✓' : ''}</span>` : '';
     return `
-      <div class="thumb-card" onclick="openImage(${img.id})">
+      <div class="thumb-card${manageOn ? ' thumb-selectable' : ''}${selectedClass}" data-id="${img.id}">
+        ${check}
         <img src="${img.url}" alt="${esc(img.filename)}" loading="lazy">
         <div class="thumb-info">
           <div class="row-between">

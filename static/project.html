@@ -60,7 +60,17 @@
       <div class="row" id="browseControls">
         <button class="btn btn-ghost-dark btn-sm" id="filterAll">All</button>
         <button class="btn btn-ghost-dark btn-sm" id="filterUnlabeled">Unlabeled</button>
+        <button class="btn btn-ghost-dark btn-sm hidden" id="manageBtn">Manage Dataset</button>
       </div>
+    </div>
+
+    <div class="row mb-2 hidden" id="manageBar">
+      <button class="btn btn-ghost-dark btn-sm" id="manageSelectAll">Select All</button>
+      <button class="btn btn-ghost-dark btn-sm" id="manageClear">Clear</button>
+      <span class="text-mute" style="font-size:12px" id="manageCount"></span>
+      <button class="btn btn-ghost-dark btn-sm" id="manageDelete">Delete Selected</button>
+      <button class="btn btn-ghost-dark btn-sm" id="manageExit">Done</button>
+      <p class="error hidden" id="manageErr" style="flex-basis:100%"></p>
     </div>
 
     <div class="panel mb-4" id="claimPanel">
