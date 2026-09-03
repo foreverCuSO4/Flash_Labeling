@@ -72,11 +72,12 @@ def upload_progress(upload_id: str, user: User = Depends(current_user)):
 # Chunked resumable video upload.
 #
 # Flow: POST /api/uploads {filename, size} -> upload_id; then PUT
-# /api/uploads/<id>/chunk?offset=N with raw bytes (sequential, server verifies
-# continuity and is idempotent for resends, so retries are always safe); then
-# POST /api/uploads/<id>/complete {project_id, params} to turn the assembled
-# file into an extraction job. Stale partials (no completion within 24h) are
-# swept opportunistically on init.
+# /api/uploads/<id>/chunk?offset=N with raw bytes. Chunks may arrive in any
+# order and concurrently (clients upload several in parallel): the server
+# tracks received byte ranges in the sidecar and reports the longest received
+# prefix as `received`. Resends of covered bytes are idempotent no-ops.
+# POST /api/uploads/<id>/complete {project_id, params} turns the fully received
+# file into an extraction job. Stale partials (24h) are swept on init.
 # ---------------------------------------------------------------------------
 
 _STALE_SECONDS = 24 * 3600
@@ -94,6 +95,33 @@ def _part_path(upload_id: str) -> Path:
 
 def _write_meta(upload_id: str, meta: dict) -> None:
     _sidecar_path(upload_id).write_text(json.dumps(meta))
+
+
+def _ranges_of(meta: dict) -> list[list[int]]:
+    """Received byte ranges; older sidecars only had a contiguous `received` prefix."""
+    if "ranges" in meta:
+        return meta["ranges"]
+    return [[0, meta["received"]]] if meta.get("received") else []
+
+
+def _merge_range(ranges: list[list[int]], start: int, end: int) -> list[list[int]]:
+    """Insert [start, end) and merge overlapping/adjacent ranges. Sorted output."""
+    ranges.append([start, end])
+    ranges.sort()
+    merged = [ranges[0]]
+    for s, e in ranges[1:]:
+        if s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e])
+    return merged
+
+
+def _contiguous_prefix(ranges: list[list[int]]) -> int:
+    """Longest received prefix starting at 0."""
+    if ranges and ranges[0][0] == 0:
+        return ranges[0][1]
+    return 0
 
 
 def _load_meta_owned(upload_id: str, user_id: int) -> dict:
@@ -149,13 +177,15 @@ def init_upload(body: UploadInitIn, user: User = Depends(current_user)):
 
 @uploads_router.get("/api/uploads/{upload_id}")
 def get_upload(upload_id: str, user: User = Depends(current_user)):
-    """Resume info — the client re-aligns its next chunk offset with `received`."""
+    """Resume info — received prefix plus all received ranges (for parallel clients)."""
     meta = _load_meta_owned(upload_id, user.id)
+    ranges = _ranges_of(meta)
     return {
         "upload_id": upload_id,
         "filename": meta["filename"],
         "size": meta["size"],
-        "received": meta["received"],
+        "received": _contiguous_prefix(ranges),
+        "ranges": ranges,
     }
 
 
@@ -163,25 +193,32 @@ def get_upload(upload_id: str, user: User = Depends(current_user)):
 async def upload_chunk(upload_id: str, request: Request, offset: int = 0,
                        user: User = Depends(current_user)):
     meta = _load_meta_owned(upload_id, user.id)
-    received = meta["received"]
     if offset < 0:
         raise HTTPException(400, "offset must be >= 0")
     data = await request.body()
     if not data:
         raise HTTPException(400, "empty chunk")
-    if offset + len(data) <= received:
-        return {"received": received}  # duplicate resend — idempotent no-op
-    if offset != received:
-        # Gap. Tell the client where the server actually is so it can re-align.
-        raise HTTPException(409, detail={"received": received})
-    if offset + len(data) > meta["size"]:
+    end = offset + len(data)
+    if end > meta["size"]:
         raise HTTPException(400, "chunk exceeds the declared file size")
     with _CHUNK_LOCK:
-        with open(_part_path(upload_id), "ab") as fh:
+        # Re-read the sidecar under the lock: concurrent chunks each merge into
+        # the latest on-disk state (reading it earlier would clobber ranges).
+        meta = _load_meta_owned(upload_id, user.id)
+        ranges = _ranges_of(meta)
+        if any(s <= offset and end <= e for s, e in ranges):
+            received = _contiguous_prefix(ranges)
+            return {"received": received}  # fully covered resend — idempotent no-op
+        # Positioned write: chunks may land out of order and concurrently.
+        with open(_part_path(upload_id), "r+b") as fh:
+            fh.seek(offset)
             fh.write(data)
-    meta["received"] = received + len(data)
-    _write_meta(upload_id, meta)
-    return {"received": meta["received"]}
+        ranges = _merge_range(ranges, offset, end)
+        received = _contiguous_prefix(ranges)
+        meta["ranges"] = ranges
+        meta["received"] = received
+        _write_meta(upload_id, meta)
+    return {"received": received}
 
 
 @uploads_router.post("/api/uploads/{upload_id}/complete")

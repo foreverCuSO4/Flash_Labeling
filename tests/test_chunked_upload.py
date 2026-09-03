@@ -38,15 +38,16 @@ class TestChunkStateMachine:
         r = _chunk(client, upload_id, 6, b"6789")
         assert r.status_code == 200 and r.json()["received"] == 10
 
-    def test_gap_rejected_with_409(self, client, alice):
+    def test_out_of_order_chunks(self, client, alice):
         upload_id = _init(client, size=10)
-        _chunk(client, upload_id, 0, b"012345")
-        r = _chunk(client, upload_id, 8, b"89")
-        assert r.status_code == 409
-        assert r.json()["detail"]["received"] == 6
-        # After re-aligning to the reported offset the upload continues.
+        # A later chunk may land first; the prefix only grows once the gap fills.
         r = _chunk(client, upload_id, 6, b"6789")
+        assert r.status_code == 200 and r.json()["received"] == 0
+        r = _chunk(client, upload_id, 0, b"012345")
         assert r.status_code == 200 and r.json()["received"] == 10
+        st = client.get(f"/api/uploads/{upload_id}").json()
+        assert st["received"] == 10
+        assert st["ranges"] == [[0, 10]]
 
     def test_resend_is_idempotent(self, client, alice):
         upload_id = _init(client, size=10)
@@ -94,6 +95,41 @@ class TestChunkStateMachine:
 
 
 class TestCompleteFlow:
+    def test_concurrent_chunks_all_counted(self, client, project, tmp_path):
+        """Concurrent chunks must all register — ranges merge only under the lock."""
+        from concurrent.futures import ThreadPoolExecutor
+        video, _, _ = make_video(tmp_path / "conc.mp4", seconds_static=1, seconds_moving=1)
+        data = open(video, "rb").read()
+        upload_id = _init(client, filename="conc.mp4", size=len(data))
+        chunk = 64 * 1024
+        bounds = list(range(0, len(data), chunk))
+
+        def send(off):
+            r = _chunk(client, upload_id, off, data[off:off + chunk])
+            assert r.status_code == 200, r.text
+
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            list(ex.map(send, bounds))
+        st = client.get(f"/api/uploads/{upload_id}").json()
+        assert st["received"] == len(data), st["ranges"]
+
+    def test_reversed_chunks_assemble_identically(self, client, project, tmp_path):
+        from app.config import VIDEO_DIR
+        video, _, _ = make_video(tmp_path / "rev.mp4", seconds_static=1, seconds_moving=1)
+        data = open(video, "rb").read()
+        upload_id = _init(client, filename="rev.mp4", size=len(data))
+        chunk = 64 * 1024
+        bounds = list(range(0, len(data), chunk))
+        for off in reversed(bounds):  # strictly out-of-order delivery
+            r = _chunk(client, upload_id, off, data[off:off + chunk])
+            assert r.status_code == 200
+        r = client.post(f"/api/uploads/{upload_id}/complete",
+                        json={"project_id": project["id"], "params": {}})
+        assert r.status_code == 200, r.text
+        stored = list((VIDEO_DIR / str(project["id"])).glob("*.mp4"))
+        assert len(stored) == 1
+        assert stored[0].read_bytes() == data
+
     def test_chunked_video_becomes_images(self, client, project, tmp_path):
         video, _, _ = make_video(tmp_path / "chunked.mp4", seconds_static=1, seconds_moving=2)
         data = open(video, "rb").read()
