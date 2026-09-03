@@ -58,10 +58,13 @@ python scripts/smoke_test.py http://host:port # against remote
   - `segment` — click-point polygons (vertex drag editing), exported as YOLO segment format
 - Create projects manually or **by uploading a dataset.yaml** — classes and mode are inferred (`kpt_shape` → pose with auto-named keypoints; polygon-style `annotation_format`/`task` → segment; otherwise detection); images are not imported
 - Multi-user claiming: images are read-only until claimed; batch-claim N images at once from the project page; a claim is exclusive and auto-expires after 24h if the image is still unlabeled; "My Claims" tab to review/release your claims; per-member stats (labeled / currently claiming)
+- **Uploads live on a separate page** (`/upload.html?project=…`) reached from the project header — images in bulk, videos via chunked resumable upload; the project page stays focused on labeling
+- **Dataset management (owner)**: a Manage mode on the project page lets you select images (all / clear / per-card checkboxes) and bulk-delete them with their annotations
 - All projects are visible to every registered user; guests can browse images and annotations read-only, and join any project from its page to start claiming and annotating
 - Canvas: draw, select, delete; drag keypoints; keyboard shortcuts
-- **Video import**: upload videos (e.g. 100fps footage) on the project page; frames are extracted with motion-adaptive sampling — static scenes sample sparsely (default 1 frame/10s), fast motion densely (default 5fps), with scene-cut forcing; sampling tiers are adjustable per upload; extracted frames land in the project as regular images; jobs run sequentially in a background queue with live progress, and original videos are kept under `data/videos/`
-- Uploads are **chunked and resumable** (16 MiB parts with server-verified offsets): progress is per-byte visible, a dropped link or page reload just resumes where it stopped, and retries are idempotent; unfinished uploads are swept after 24h
+- **Video import**: upload videos (e.g. 100fps footage) on the upload page; frames are extracted with motion-adaptive sampling — static scenes sample sparsely (default 1 frame/10s), fast motion densely (default 5fps), with scene-cut forcing; sampling tiers are adjustable per upload; extracted frames land in the project as regular images; original videos are kept under `data/videos/`
+- Extraction is **parallel**: each video is split into frame ranges decoded on up to `VIDEO_EXTRACT_WORKERS` threads (default 4) while jobs run one at a time; a single video runs several times faster than realtime decode would
+- Uploads are **chunked, resumable and parallel** (16 MiB parts, 4 in flight, out-of-order writes with server-tracked ranges): progress is per-byte visible, a dropped link or page reload just resumes, retries are idempotent; unfinished uploads are swept after 24h
 - YOLO export: zip with `images/`, `labels/`, `classes.txt`, `data.yaml` (includes `kpt_shape` for pose)
 - Lightweight DB migrations on startup (old databases keep working)
 
