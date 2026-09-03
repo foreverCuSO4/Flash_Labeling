@@ -11,6 +11,7 @@ correlation drop) always force a sample.
 from __future__ import annotations
 
 import math
+import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -135,56 +136,42 @@ def _hist(gray: np.ndarray) -> np.ndarray:
     return cv2.normalize(h, h).flatten()
 
 
-def extract_frames(
+def _extract_segment(
     video_path: Path,
     out_dir: Path,
     params: ExtractParams,
-    *,
-    on_progress: Optional[Callable[[int, int, int], None]] = None,
-    should_cancel: Optional[Callable[[], bool]] = None,
-) -> dict:
-    """Extract frames from `video_path` into `out_dir` (full-resolution JPEGs).
+    fps: float,
+    start: int,
+    end: float,
+    shared: dict,
+) -> None:
+    """Decode frames [start, end) of the video and sample them.
 
-    `on_progress(decoded, total, extracted)` fires every 30 decoded frames;
-    `total` is the container's frame count (0 when unknown). `should_cancel()`
-    is polled at the same cadence; returning True raises `Cancelled`.
-
-    Returns {"fps", "total_frames", "capped", "frames"} where each frame is
-    {"frame_idx", "timestamp", "stored_name", "width", "height"}.
+    All cross-segment state (frame list, decoded count, cap, cancel, progress)
+    lives in `shared`; see extract_frames. The first frame of a segment is
+    always sampled, which may add up to `workers - 1` extra frames at segment
+    boundaries — harmless over-sampling.
     """
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"cannot open video: {video_path}")
     try:
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        if not fps or math.isnan(fps) or fps <= 0:
-            fps = 30.0
-        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        # Containers without a frame index report garbage here (e.g. int64 min,
-        # ffmpeg's AV_NOPTS_VALUE) — treat anything insane as "unknown" (0).
-        if not (0 < total < 2 ** 40):
-            total = 0
-
-        out_dir.mkdir(parents=True, exist_ok=True)
-        frames: list[dict] = []
+        if start:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start)
         ema = 0.0
         prev_gray: Optional[np.ndarray] = None
         prev_hist: Optional[np.ndarray] = None
-        last_sample = 0  # frame index of the most recent sample
-        frame_idx = -1
-        capped = False
+        last_sample = start
+        frame_idx = start - 1
 
-        while True:
+        while frame_idx + 1 < end:
             ok, frame = cap.read()
             if not ok:
                 break
             frame_idx += 1
 
-            if frame_idx % 30 == 0:
-                if should_cancel is not None and should_cancel():
-                    raise Cancelled()
-                if on_progress is not None:
-                    on_progress(frame_idx, total, len(frames))
+            if not shared["tick"](frame_idx):
+                return  # cancelled (or another segment cancelled)
 
             gray = _analysis_view(frame, params.analyze_width)
             cut = False
@@ -202,30 +189,127 @@ def extract_frames(
             # smoothed score, so a sudden burst of motion starts sampling
             # promptly instead of waiting out a stale "static" deadline.
             due = (frame_idx - last_sample) >= max(1, round(interval_for(ema, params) * fps))
-            if frame_idx == 0 or cut or due:
-                if len(frames) >= params.max_frames:
-                    capped = True
-                    break
+            if frame_idx == start or cut or due:
                 stored = f"{uuid.uuid4().hex}.jpg"
-                cv2.imwrite(str(out_dir / stored), frame,
-                            [cv2.IMWRITE_JPEG_QUALITY, params.jpeg_quality])
                 fh, fw = frame.shape[:2]
-                frames.append({
+                info = {
                     "frame_idx": frame_idx,
                     "timestamp": frame_idx / fps,
                     "stored_name": stored,
                     "width": fw,
                     "height": fh,
-                })
+                }
+                if not shared["reserve"](info):
+                    return  # max_frames cap reached
+                cv2.imwrite(str(out_dir / stored), frame,
+                            [cv2.IMWRITE_JPEG_QUALITY, params.jpeg_quality])
                 last_sample = frame_idx
-
-        if on_progress is not None:
-            on_progress(frame_idx + 1, total, len(frames))
-        return {
-            "fps": fps,
-            "total_frames": frame_idx + 1,
-            "capped": capped,
-            "frames": frames,
-        }
     finally:
         cap.release()
+
+
+def extract_frames(
+    video_path: Path,
+    out_dir: Path,
+    params: ExtractParams,
+    *,
+    workers: int = 1,
+    on_progress: Optional[Callable[[int, int, int], None]] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
+) -> dict:
+    """Extract frames from `video_path` into `out_dir` (full-resolution JPEGs).
+
+    With `workers > 1` and a known frame count, the video is split into
+    contiguous ranges decoded in parallel threads (OpenCV releases the GIL).
+    Each segment scores motion independently; segment starts are always
+    sampled, so results may differ from single-thread output by up to
+    `workers - 1` extra frames at the boundaries.
+
+    `on_progress(decoded, total, extracted)` fires every ~30 decoded frames;
+    `total` is the container's frame count (0 when unknown). `should_cancel()`
+    is polled at the same cadence; returning True raises `Cancelled`.
+
+    Returns {"fps", "total_frames", "capped", "frames"} where each frame is
+    {"frame_idx", "timestamp", "stored_name", "width", "height"} sorted by
+    frame index.
+    """
+    probe = cv2.VideoCapture(str(video_path))
+    if not probe.isOpened():
+        raise RuntimeError(f"cannot open video: {video_path}")
+    fps = probe.get(cv2.CAP_PROP_FPS)
+    if not fps or math.isnan(fps) or fps <= 0:
+        fps = 30.0
+    total = int(probe.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    probe.release()
+    # Containers without a frame index report garbage here (e.g. int64 min,
+    # ffmpeg's AV_NOPTS_VALUE) — treat anything insane as "unknown" (0).
+    if not (0 < total < 2 ** 40):
+        total = 0
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if workers > 1 and total >= workers * 900:
+        step = math.ceil(total / workers)
+        ranges = [(s, min(s + step, total)) for s in range(0, total, step)]
+    else:
+        ranges = [(0, math.inf)]
+
+    lock = threading.Lock()
+    shared: dict = {"decoded": 0, "frames": [], "capped": False,
+                    "cancelled": False, "errors": []}
+
+    def tick(frame_idx: int) -> bool:
+        """Count one decoded frame; report progress; honour cancellation."""
+        with lock:
+            shared["decoded"] += 1
+            decoded = shared["decoded"]
+            extracted = len(shared["frames"])
+        if decoded % 30 == 0:
+            if should_cancel is not None and should_cancel():
+                return False
+            if on_progress is not None:
+                on_progress(decoded, total, extracted)
+        return True
+
+    def reserve(info: dict) -> bool:
+        """Take a max_frames slot under the lock (JPEG write stays outside)."""
+        with lock:
+            if len(shared["frames"]) >= params.max_frames:
+                shared["capped"] = True
+                return False
+            shared["frames"].append(info)
+            return True
+
+    shared["tick"] = tick
+    shared["reserve"] = reserve
+
+    def run_segment(start: int, end: float) -> None:
+        try:
+            _extract_segment(video_path, out_dir, params, fps, start, end, shared)
+        except Cancelled:
+            shared["cancelled"] = True
+        except Exception as e:  # noqa: BLE001 — surfaced after the join
+            shared["errors"].append(e)
+
+    if len(ranges) == 1:
+        run_segment(*ranges[0])
+    else:
+        threads = [threading.Thread(target=run_segment, args=r, daemon=True) for r in ranges]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    if shared["errors"]:
+        raise shared["errors"][0]
+    if should_cancel is not None and should_cancel():
+        raise Cancelled()
+    if on_progress is not None:
+        with lock:
+            on_progress(shared["decoded"], total, len(shared["frames"]))
+    frames = sorted(shared["frames"], key=lambda f: f["frame_idx"])
+    return {
+        "fps": fps,
+        "total_frames": shared["decoded"],
+        "capped": shared["capped"],
+        "frames": frames,
+    }

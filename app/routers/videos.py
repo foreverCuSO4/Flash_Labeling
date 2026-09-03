@@ -1,4 +1,5 @@
 import json
+import os
 import queue
 import re
 import shutil
@@ -26,6 +27,12 @@ _CHUNK = 1 << 20  # 1 MiB streaming read
 # Bound concurrent video-file saves — each is a multi-hundred-MB disk write,
 # and several at once can stall the host's I/O.
 _SAVE_SEM = threading.Semaphore(2)
+
+# Per-video extraction parallelism: the video is split into frame ranges
+# decoded concurrently (each thread runs its own decoder). Default 4 —
+# enough to speed up a single big video several-fold without swamping a
+# small host; override with VIDEO_EXTRACT_WORKERS.
+_EXTRACT_WORKERS = max(1, int(os.environ.get("VIDEO_EXTRACT_WORKERS", "4")))
 
 # Server-side save progress, so the browser can show a bar after the request
 # body has been sent (XHR progress only covers the wire). upload_id is a
@@ -307,6 +314,7 @@ def run_job(job_id: int) -> None:
                 VIDEO_DIR / str(job.project_id) / job.stored_name,
                 tmp_dir,
                 params,
+                workers=_EXTRACT_WORKERS,
                 on_progress=on_progress,
                 should_cancel=should_cancel,
             )

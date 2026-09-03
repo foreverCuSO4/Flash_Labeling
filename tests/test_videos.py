@@ -143,6 +143,54 @@ class TestExtractFrames:
             extract_frames(bogus, tmp_path / "out", ExtractParams())
 
 
+class TestParallelExtract:
+    """workers>1 splits the video into ranges decoded concurrently; boundary
+    frames may be sampled once extra per split, so counts differ slightly."""
+
+    def test_workers_match_single_thread_closely(self, tmp_path):
+        video, n_static, _ = make_video(tmp_path / "clip.mp4",
+                                        seconds_static=20, seconds_moving=60)
+        p = ExtractParams()
+        r1 = extract_frames(video, tmp_path / "w1", p, workers=1)
+        r2 = extract_frames(video, tmp_path / "w2", p, workers=2)
+        assert r2["fps"] == r1["fps"]
+        assert r2["total_frames"] == r1["total_frames"]
+        assert abs(len(r2["frames"]) - len(r1["frames"])) <= 2
+        idx2 = [f["frame_idx"] for f in r2["frames"]]
+        assert idx2 == sorted(idx2) and 0 in idx2
+        moving2 = [i for i in idx2 if i >= n_static]
+        assert len(moving2) > 3 * len([i for i in idx2 if i < n_static])
+        for f in r2["frames"]:
+            img = cv2.imread(str(tmp_path / "w2" / f["stored_name"]))
+            assert img is not None
+
+    def test_parallel_max_frames(self, tmp_path):
+        video, _, _ = make_video(tmp_path / "clip.mp4",
+                                 seconds_static=0, seconds_moving=70)
+        r = extract_frames(video, tmp_path / "out", ExtractParams(max_frames=3), workers=2)
+        assert r["capped"] is True
+        assert len(r["frames"]) == 3
+
+    def test_parallel_cancel(self, tmp_path):
+        video, _, _ = make_video(tmp_path / "clip.mp4",
+                                 seconds_static=0, seconds_moving=70)
+        calls = {"n": 0}
+
+        def cancel():
+            calls["n"] += 1
+            return calls["n"] > 2
+
+        with pytest.raises(Cancelled):
+            extract_frames(video, tmp_path / "out", ExtractParams(),
+                           workers=2, should_cancel=cancel)
+
+    def test_short_video_falls_back_to_single_thread(self, tmp_path):
+        # Below the per-worker frame floor, ranges collapse to one segment.
+        video, _, _ = make_video(tmp_path / "clip.mp4", seconds_static=1, seconds_moving=1)
+        r = extract_frames(video, tmp_path / "out", ExtractParams(), workers=8)
+        assert len(r["frames"]) >= 1
+
+
 class TestApi:
     def _wait_job(self, client, project_id, job_id, timeout=60):
         deadline = time.time() + timeout
