@@ -160,6 +160,10 @@ def extract_frames(
         if not fps or math.isnan(fps) or fps <= 0:
             fps = 30.0
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        # Containers without a frame index report garbage here (e.g. int64 min,
+        # ffmpeg's AV_NOPTS_VALUE) — treat anything insane as "unknown" (0).
+        if not (0 < total < 2 ** 40):
+            total = 0
 
         out_dir.mkdir(parents=True, exist_ok=True)
         frames: list[dict] = []

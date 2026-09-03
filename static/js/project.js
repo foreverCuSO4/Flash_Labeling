@@ -69,8 +69,7 @@ async function init() {
     } catch (err) { showErr(uploadErr, err.detail || 'Upload failed'); }
   };
 
-  // Video import — the upload can run long (100fps videos are big), so it uses
-  // XHR for real upload progress instead of fetch (which reports none).
+  // Video import — chunked resumable upload (100fps videos are GB-scale).
   const videoErr = document.getElementById('videoErr');
   const videoOk = document.getElementById('videoOk');
   const videoBtn = document.getElementById('videoSubmitBtn');
@@ -80,29 +79,39 @@ async function init() {
   document.getElementById('videoForm').onsubmit = async (e) => {
     e.preventDefault();
     hideErr(videoErr); videoOk.classList.add('hidden');
-    const files = document.getElementById('videoInput').files;
+    const files = [...document.getElementById('videoInput').files];
     if (!files.length) return;
-    const fd = new FormData();
-    for (const f of files) fd.append('files', f);
-    fd.append('params', JSON.stringify(videoParams()));
+    const params = videoParams();
     videoBtn.disabled = true;
     videoUploading.classList.remove('hidden');
-    videoUploadFill.style.width = '0%';
+    let queued = 0;
     try {
-      const jobs = await uploadWithProgress(
-        `/api/projects/${projectId}/videos/upload`, fd,
-        (ratio) => {
-          const pct = Math.round(ratio * 100);
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        if (!f.size) { showErr(videoErr, `${f.name} is empty`); continue; }
+        const which = files.length > 1 ? ` (${i + 1}/${files.length})` : '';
+        const uploadId = await chunkedUpload(projectId, f, (done, total) => {
+          const pct = Math.round(100 * done / total);
           videoUploadFill.style.width = `${pct}%`;
-          videoUploadStatus.textContent = pct >= 100
-            ? 'Uploaded — starting extraction…'
-            : `Uploading… ${pct}%`;
+          videoUploadStatus.textContent =
+            `Uploading${which} ${f.name}… ${pct}% (${Math.round(done / 1048576)} / ${Math.round(total / 1048576)} MB)`;
         });
-      videoOk.textContent = `${jobs.length} video(s) queued for extraction.`;
-      videoOk.classList.remove('hidden');
-      document.getElementById('videoInput').value = '';
-      loadVideoJobs();
-    } catch (err) { showErr(videoErr, err.detail || 'Upload failed'); }
+        videoUploadFill.style.width = '100%';
+        videoUploadStatus.textContent = `Queued for extraction${which}…`;
+        await API.post(`/api/uploads/${uploadId}/complete`, { project_id: parseInt(projectId), params });
+        localStorage.removeItem(resumeKey(projectId, f));
+        queued++;
+      }
+      if (queued) {
+        videoOk.textContent = `${queued} video(s) queued for extraction.`;
+        videoOk.classList.remove('hidden');
+        document.getElementById('videoInput').value = '';
+        loadVideoJobs();
+      }
+    } catch (err) {
+      const msg = typeof err.detail === 'string' ? err.detail : 'Upload failed';
+      showErr(videoErr, `${msg} — progress is saved, submit again to resume.`);
+    }
     videoBtn.disabled = false;
     videoUploading.classList.add('hidden');
   };
@@ -242,15 +251,24 @@ async function releaseImage(imageId, e) {
   } catch {}
 }
 
-// XHR-based upload with real progress (fetch cannot report upload progress).
-// Resolves with the parsed JSON body; rejects with { status, detail } like API.request.
-function uploadWithProgress(url, fd, onProgress) {
+// --- Chunked resumable video upload ------------------------------------------
+// Small (16 MiB) sequential chunks keep every request small enough for fragile
+// links; the server verifies offsets, so resending a chunk is always a safe
+// no-op and a 409 tells us where the server actually is. The upload_id is
+// remembered per file (project + name + size), so a reload / dropped link /
+// frozen tunnel just resumes from the server's byte count on the next submit.
+const CHUNK_SIZE = 16 * 1024 * 1024;
+
+function resumeKey(projectId, file) {
+  return `fl_vidup_${projectId}_${file.name}_${file.size}`;
+}
+
+function uploadChunk(url, blob, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', url);
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
-    };
+    xhr.open('PUT', url);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (e) => { if (onProgress) onProgress(e.loaded); };
     xhr.onload = () => {
       let data = {};
       try { data = JSON.parse(xhr.responseText); } catch {}
@@ -258,8 +276,50 @@ function uploadWithProgress(url, fd, onProgress) {
       else reject({ status: xhr.status, detail: data.detail || xhr.statusText || 'Upload failed' });
     };
     xhr.onerror = () => reject({ detail: 'Network error' });
-    xhr.send(fd);
+    xhr.send(blob);
   });
+}
+
+async function chunkedUpload(projectId, file, onProgress) {
+  const key = resumeKey(projectId, file);
+  let uploadId = localStorage.getItem(key);
+  let received = 0;
+  if (uploadId) {
+    try {
+      const st = await API.get(`/api/uploads/${uploadId}`);
+      if (st.size === file.size) received = st.received;
+      else { uploadId = null; localStorage.removeItem(key); }
+    } catch { uploadId = null; localStorage.removeItem(key); }  // gone or stale — start over
+  }
+  if (!uploadId) {
+    const init = await API.post('/api/uploads', { filename: file.name, size: file.size });
+    uploadId = init.upload_id;
+    localStorage.setItem(key, uploadId);
+  }
+  onProgress(received, file.size);
+  while (received < file.size) {
+    const blob = file.slice(received, Math.min(received + CHUNK_SIZE, file.size));
+    const base = received;
+    let attempts = 0;
+    for (;;) {
+      attempts++;
+      try {
+        const r = await uploadChunk(`/api/uploads/${uploadId}/chunk?offset=${base}`, blob,
+          (loaded) => onProgress(base + loaded, file.size));
+        received = r.received;
+        break;
+      } catch (err) {
+        // 409: the server's offset differs from ours — re-align and continue.
+        if (err.status === 409 && err.detail && typeof err.detail.received === 'number') {
+          received = err.detail.received;
+          break;
+        }
+        if (attempts >= 5) throw err;
+        await new Promise((res) => setTimeout(res, 1000 * attempts));
+      }
+    }
+  }
+  return uploadId;
 }
 
 // Video import — params from the advanced settings form (ceilings are % in the UI, 0..1 in the API)
@@ -304,11 +364,14 @@ function renderVideoJobs() {
   const el = document.getElementById('videoJobs');
   el.innerHTML = (videoJobs || []).map(j => {
     const running = j.status === 'pending' || j.status === 'running';
-    const pct = Math.min(100, Math.round((j.progress || 0) * 100));
-    const decoded = j.total_frames ? Math.round((j.progress || 0) * j.total_frames) : 0;
-    const stats = j.total_frames
-      ? `${decoded.toLocaleString()} / ${j.total_frames.toLocaleString()} frames decoded · ${(j.extracted_frames || 0).toLocaleString()} extracted`
-      : `${(j.extracted_frames || 0).toLocaleString()} extracted`;
+    const knownTotal = (j.total_frames || 0) > 0;
+    const pct = knownTotal ? Math.min(100, Math.round((j.progress || 0) * 100)) : 100;
+    const decoded = (j.decoded_frames || 0).toLocaleString();
+    const extracted = (j.extracted_frames || 0).toLocaleString();
+    const stats = knownTotal
+      ? `${decoded} / ${j.total_frames.toLocaleString()} frames decoded · ${extracted} extracted`
+      : `${decoded} frames decoded · ${extracted} extracted`;
+    const indeterminate = running && !knownTotal;
     const cancelBtn = running && !j.cancel_requested
       ? `<button class="btn btn-ghost-dark btn-sm" onclick="cancelVideoJob(${j.id})">Cancel</button>` : '';
     const cancelling = running && j.cancel_requested
@@ -319,7 +382,7 @@ function renderVideoJobs() {
           <span style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(j.filename)}</span>
           <span class="row" style="gap:12px">${cancelling}${cancelBtn}<span class="micro-cap">${esc(j.status)}</span></span>
         </div>
-        <div class="progress" style="margin-top:8px;"><div class="progress-fill" style="width:${pct}%"></div></div>
+        <div class="progress${indeterminate ? ' indeterminate' : ''}" style="margin-top:8px;"><div class="progress-fill" style="width:${pct}%"></div></div>
         <p class="text-mute" style="font-size:12px;margin-top:4px;">${stats}</p>
         ${j.status === 'failed' && j.error ? `<p class="error">${esc(j.error)}</p>` : ''}
       </div>`;

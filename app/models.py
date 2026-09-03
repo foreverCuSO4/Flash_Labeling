@@ -65,10 +65,11 @@ class VideoJob(SQLModel, table=True):
     stored_name: str  # unique name on disk under VIDEO_DIR/<project_id>/; videos are kept
     status: str = Field(default="pending", index=True)  # pending | running | done | failed | cancelled
     cancel_requested: bool = False
-    progress: float = 0.0  # 0..1 decode progress
+    progress: float = 0.0  # 0..1 decode progress (stays 0 when total_frames is unknown)
     params: str = Field(default="{}")  # JSON sampling params (see app/video.py)
     fps: float = 0.0
-    total_frames: int = 0
+    total_frames: int = 0  # container-reported count (0 = unknown until finished)
+    decoded_frames: int = 0
     extracted_frames: int = 0
     error: Optional[str] = None
     created_by: int = Field(foreign_key="user.id")

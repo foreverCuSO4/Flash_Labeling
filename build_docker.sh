@@ -1,1 +1,1 @@
-docker build -t flash-labeling .
+docker build --no-cache -t flash-labeling .

@@ -5,6 +5,7 @@ from .config import DATA_DIR, DB_PATH
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "uploads").mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "videos").mkdir(parents=True, exist_ok=True)
+(DATA_DIR / "uploads_tmp").mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "avatars").mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "exports").mkdir(parents=True, exist_ok=True)
 
@@ -44,6 +45,9 @@ _COLUMN_MIGRATIONS = {
     },
     "image": {
         "labeled_by": "INTEGER",
+    },
+    "videojob": {
+        "decoded_frames": "INTEGER DEFAULT 0",
     },
 }
 

@@ -171,6 +171,8 @@ class TestApi:
         assert job["progress"] == 1.0
         assert job["extracted_frames"] > 0
         assert job["fps"] > 0
+        assert job["total_frames"] > 0
+        assert job["decoded_frames"] == job["total_frames"]
 
         images = client.get(f"/api/projects/{project['id']}/images").json()
         assert len(images) == job["extracted_frames"]
@@ -202,3 +204,59 @@ class TestApi:
     def test_cancel_missing_job(self, client, project):
         r = client.post(f"/api/projects/{project['id']}/videos/9999/cancel")
         assert r.status_code == 404
+
+    def test_upload_progress_endpoint(self, client, project, tmp_path):
+        video, _, _ = make_video(tmp_path / "p.mp4", seconds_static=0, seconds_moving=1)
+        with open(video, "rb") as fh:
+            r = client.post(f"/api/projects/{project['id']}/videos/upload",
+                            files={"files": ("p.mp4", fh, "video/mp4")},
+                            data={"params": "{}", "upload_id": "test-upload-1"})
+        assert r.status_code == 200, r.text
+        p = client.get("/api/uploads/test-upload-1/progress").json()
+        assert p["done"] is True
+        assert p["file_count"] == 1
+        assert p["filename"] == "p.mp4"
+        assert p["saved"] > 0
+        self._wait_job(client, project["id"], r.json()[0]["id"])
+
+    def test_upload_progress_unknown_id(self, client, project):
+        assert client.get("/api/uploads/nope/progress").status_code == 404
+
+    def test_upload_progress_requires_login(self, client):
+        assert client.get("/api/uploads/x/progress").status_code == 401
+
+    def test_multiple_videos_run_to_completion(self, client, project, tmp_path):
+        videos = []
+        for name in ("a.mp4", "b.mp4"):
+            v, _, _ = make_video(tmp_path / name, seconds_static=1, seconds_moving=1)
+            videos.append((name, open(v, "rb"), "video/mp4"))
+        r = client.post(f"/api/projects/{project['id']}/videos/upload",
+                        files=[("files", v) for v in videos], data={"params": "{}"})
+        assert r.status_code == 200, r.text
+        jobs = r.json()
+        assert len(jobs) == 2
+        done_jobs = []
+        for j in jobs:
+            done = self._wait_job(client, project["id"], j["id"])
+            assert done["status"] == "done", done["error"]
+            done_jobs.append(done)
+        images = client.get(f"/api/projects/{project['id']}/images").json()
+        assert len(images) == sum(j["extracted_frames"] for j in done_jobs)
+
+    def test_cancel_queued_job(self, client, project):
+        # A job cancelled while still pending in the worker queue must end up
+        # cancelled once the worker reaches it (not run).
+        from sqlmodel import Session
+        from app.db import engine
+        from app.models import VideoJob
+        from app.routers.videos import run_job
+        with Session(engine) as s:
+            job = VideoJob(project_id=project["id"], filename="v.mp4", stored_name="x.mp4",
+                           cancel_requested=True, created_by=1)
+            s.add(job)
+            s.commit()
+            s.refresh(job)
+            job_id = job.id
+        run_job(job_id)
+        jobs = client.get(f"/api/projects/{project['id']}/videos").json()
+        assert next(j for j in jobs if j["id"] == job_id)["status"] == "cancelled"

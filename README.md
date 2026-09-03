@@ -60,7 +60,8 @@ python scripts/smoke_test.py http://host:port # against remote
 - Multi-user claiming: images are read-only until claimed; batch-claim N images at once from the project page; a claim is exclusive and auto-expires after 24h if the image is still unlabeled; "My Claims" tab to review/release your claims; per-member stats (labeled / currently claiming)
 - All projects are visible to every registered user; guests can browse images and annotations read-only, and join any project from its page to start claiming and annotating
 - Canvas: draw, select, delete; drag keypoints; keyboard shortcuts
-- **Video import**: upload videos (e.g. 100fps footage) on the project page; frames are extracted with motion-adaptive sampling — static scenes sample sparsely (default 1 frame/10s), fast motion densely (default 5fps), with scene-cut forcing; sampling tiers are adjustable per upload; extracted frames land in the project as regular images; jobs run in the background with live progress, and original videos are kept under `data/videos/`
+- **Video import**: upload videos (e.g. 100fps footage) on the project page; frames are extracted with motion-adaptive sampling — static scenes sample sparsely (default 1 frame/10s), fast motion densely (default 5fps), with scene-cut forcing; sampling tiers are adjustable per upload; extracted frames land in the project as regular images; jobs run sequentially in a background queue with live progress, and original videos are kept under `data/videos/`
+- Uploads are **chunked and resumable** (16 MiB parts with server-verified offsets): progress is per-byte visible, a dropped link or page reload just resumes where it stopped, and retries are idempotent; unfinished uploads are swept after 24h
 - YOLO export: zip with `images/`, `labels/`, `classes.txt`, `data.yaml` (includes `kpt_shape` for pose)
 - Lightweight DB migrations on startup (old databases keep working)
 

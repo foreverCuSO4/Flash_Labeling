@@ -27,6 +27,7 @@ app.include_router(annotations.router)
 app.include_router(export.router)
 app.include_router(users.router)
 app.include_router(videos.router)
+app.include_router(videos.uploads_router)
 
 
 @app.get("/api/health")
