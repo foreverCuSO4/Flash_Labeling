@@ -93,6 +93,16 @@ async function init() {
     videoUploading.classList.add('hidden');
   };
 
+  // Sampling-mode radio: swap the motion tiers panel with the auto-scan panel.
+  const autoParams = document.getElementById('autoParams');
+  const motionParams = document.getElementById('motionParams');
+  const onModeChange = () => {
+    const auto = document.querySelector('input[name="sampleMode"]:checked')?.value === 'auto';
+    autoParams.classList.toggle('hidden', !auto);
+    motionParams.classList.toggle('hidden', auto);
+  };
+  document.querySelectorAll('input[name="sampleMode"]').forEach(r => r.onchange = onModeChange);
+
   loadVideoJobs();
 }
 
@@ -217,6 +227,20 @@ function videoParams() {
     const v = parseFloat(document.getElementById(id).value);
     return Number.isFinite(v) ? v : fallback;
   };
+  const mode = document.querySelector('input[name="sampleMode"]:checked')?.value || 'motion';
+  if (mode === 'auto') {
+    return {
+      max_frames: Math.round(num('maxFrames', 5000)),
+      jpeg_quality: Math.round(num('jpegQuality', 90)),
+      auto: {
+        conf: num('autoConf', 0.2),
+        dilate_s: num('autoDilate', 3),
+        sample_fps: num('autoFps', 10),
+        max_frames: Math.round(num('maxFrames', 5000)),
+        jpeg_quality: Math.round(num('jpegQuality', 90)),
+      },
+    };
+  }
   return {
     tiers: [
       [num('tierCeil0', 0.5) / 100, num('tierInt0', 10)],

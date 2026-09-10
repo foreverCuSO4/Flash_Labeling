@@ -35,9 +35,17 @@ const okMsg = document.getElementById('okMsg');
 const kpPanel = document.getElementById('kpPanel');
 const kpList = document.getElementById('kpList');
 const kpStatus = document.getElementById('kpStatus');
+const brushPanel = document.getElementById('brushPanel');
+const brushBtn = document.getElementById('brushBtn');
+const brushStatus = document.getElementById('brushStatus');
+const brushRadiusInput = document.getElementById('brushRadius');
 
 const isPose = () => project && project.mode === 'pose';
 const isSeg = () => project && project.mode === 'segment';
+
+let brushOn = false;
+let brushCursor = null;   // canvas coords while the brush is on, for the circle preview
+let brushRadius = 60;     // display pixels (converted to image px by /scale)
 
 async function init() {
   if (!projectId || !imageId) { window.location.href = '/projects.html'; return; }
@@ -64,11 +72,14 @@ async function init() {
   document.getElementById('prevBtn').onclick = () => navigate(-1);
   document.getElementById('nextBtn').onclick = () => navigate(1);
 
+  brushPanel.classList.toggle('hidden', isSeg());
+  brushBtn.onclick = () => setBrush(!brushOn);
+  brushRadiusInput.oninput = () => { brushRadius = parseInt(brushRadiusInput.value) || 60; redraw(); };
   canvas.addEventListener('mousedown', onMouseDown);
   canvas.addEventListener('mousemove', onMouseMove);
   canvas.addEventListener('mouseup', onMouseUp);
   canvas.addEventListener('dblclick', onDblClick);
-  canvas.addEventListener('mouseleave', () => { if (drawing) { drawing = false; redraw(); } draggingKp = null; draggingVert = null; draftCursor = null; if (polyDraft) redraw(); });
+  canvas.addEventListener('mouseleave', () => { if (drawing) { drawing = false; redraw(); } draggingKp = null; draggingVert = null; draftCursor = null; brushCursor = null; if (polyDraft) redraw(); else redraw(); });
   document.addEventListener('keydown', onKeyDown);
   window.addEventListener('resize', fitCanvas);
 }
@@ -93,6 +104,62 @@ async function claimThis() {
     await API.post(`/api/projects/${projectId}/images/${imageId}/claim`);
     window.location.reload();
   } catch (err) { showErr(errMsg, err.detail || 'Claim failed'); }
+}
+
+function setBrush(on) {
+  brushOn = on;
+  if (brushOn) {
+    // Entering brush mode ends any in-progress draw/placement.
+    drawing = false; polyDraft = null; draftCursor = null;
+    if (placing) cancelPlacing();
+    brushStatus.classList.remove('hidden');
+  } else {
+    brushCursor = null;
+    brushStatus.classList.add('hidden');
+  }
+  brushBtn.textContent = `Brush: ${brushOn ? 'On' : 'Off'}`;
+  brushBtn.classList.toggle('active', brushOn);
+  redraw();
+}
+
+async function doBrush(pos) {
+  if (readOnly || isSeg()) return;
+  const [nx, ny] = toNorm(pos.x, pos.y);
+  const rPx = brushRadius / scale;   // display px -> image px
+  try {
+    const res = await API.post(`/api/images/${imageId}/brush`, { x: nx, y: ny, r: rPx });
+    const s = res.suggestion;
+    if (!s) {
+      okMsg.textContent = `No detection in the brush area (${res.rows} cached row(s)).`;
+      okMsg.classList.remove('hidden');
+      setTimeout(() => okMsg.classList.add('hidden'), 1500);
+      return;
+    }
+    if (readOnly) return;
+    const cls = project.classes[selectedClassIdx];
+    if (!cls) return;
+    const box = {
+      class_id: cls.id,
+      x: s.x, y: s.y, w: s.w, h: s.h,
+      keypoints: isPose() ? [] : null,
+      polygon: null,
+    };
+    boxes.push(box);
+    selectedBoxIdx = boxes.length - 1;
+    updateBoxCount();
+    if (isPose()) {
+      placing = { boxIdx: selectedBoxIdx, nextKp: 0 };
+      renderKpPanel();
+    }
+    redraw();
+  } catch (err) {
+    const detail = typeof err.detail === 'string' ? err.detail : '';
+    if (err.status === 503) {
+      showErr(errMsg, `Auto-suggest unavailable: ${detail || 'inference service not running'}`);
+    } else {
+      showErr(errMsg, detail || 'Brush failed');
+    }
+  }
 }
 
 function renderClasses() {
@@ -264,6 +331,16 @@ function redraw() {
     });
   }
 
+  if (brushOn && brushCursor) {
+    ctx.beginPath();
+    ctx.arc(brushCursor.x, brushCursor.y, brushRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
   if (drawing && drawStart && drawCurrent) {
     const x = Math.min(drawStart.x, drawCurrent.x);
     const y = Math.min(drawStart.y, drawCurrent.y);
@@ -368,6 +445,8 @@ function onMouseDown(e) {
   if (readOnly) return;
   const pos = getMousePos(e);
 
+  if (brushOn) { doBrush(pos); return; }
+
   if (placing) { placeKeypoint(pos); return; }
 
   if (isSeg()) {
@@ -409,6 +488,11 @@ function onMouseDown(e) {
 function onMouseMove(e) {
   if (readOnly) return;
   const pos = getMousePos(e);
+  if (brushOn) {
+    brushCursor = pos;
+    redraw();
+    return;
+  }
   if (draggingKp) {
     const [nx, ny] = toNorm(pos.x, pos.y);
     const kp = boxes[draggingKp.boxIdx].keypoints[draggingKp.kpIdx];
@@ -583,6 +667,10 @@ function onKeyDown(e) {
   if (n >= 1 && n <= Math.min(project.classes.length, 8)) {
     selectedClassIdx = n - 1;
     renderClasses();
+    return;
+  }
+  if ((e.key === 'b' || e.key === 'B') && !isSeg()) {
+    setBrush(!brushOn);
     return;
   }
   if (e.key === 'Delete' || e.key === 'Backspace') {

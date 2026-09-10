@@ -64,6 +64,8 @@ python scripts/smoke_test.py http://host:port # against remote
 - Canvas: draw, select, delete; drag keypoints; keyboard shortcuts
 - **Video import**: upload videos (e.g. 100fps footage) on the upload page; frames are extracted with motion-adaptive sampling — static scenes sample sparsely (default 1 frame/10s), fast motion densely (default 5fps), with scene-cut forcing; sampling tiers are adjustable per upload; extracted frames land in the project as regular images; original videos are kept under `data/videos/`
 - Extraction is **parallel**: each video is split into frame ranges decoded on up to `VIDEO_EXTRACT_WORKERS` threads (default 4) while jobs run one at a time; a single video runs several times faster than realtime decode would
+- **Model auto-scan (optional)**: with the [NPU inference backend](docs/inference_backend.md) running, video import offers a *Model auto-scan* mode — the whole video is scanned by the model at a low confidence floor (default 0.2), hit frames are dilated ±3s and unioned into "annotation-worthy" windows, and only windows are sampled (default 10fps); per-frame detections are cached (`data/cache/det/`) for brush annotation
+- **Brush annotation (auto-assist)**: on the annotate page toggle the brush (`B`), click inside the circle and a detection under the cursor (model floor 0.05) becomes a box with the currently selected class — geometry is snapped, semantics stay with the annotator; works on cached or on-demand detections
 - Uploads are **chunked, resumable and parallel** (16 MiB parts, 4 in flight, out-of-order writes with server-tracked ranges): progress is per-byte visible, a dropped link or page reload just resumes, retries are idempotent; unfinished uploads are swept after 24h
 - YOLO export: zip with `images/`, `labels/`, `classes.txt`, `data.yaml` (includes `kpt_shape` for pose)
 - Lightweight DB migrations on startup (old databases keep working)
@@ -82,6 +84,7 @@ python scripts/smoke_test.py http://host:port # against remote
 | Key | Action |
 |-----|--------|
 | 1–8 | Select class |
+| B | Toggle brush (auto-attach box from detection cache) |
 | S | Save annotations |
 | Enter | Close polygon (segment mode, while drawing) |
 | V | Toggle keypoint visibility (pose mode, while placing) |

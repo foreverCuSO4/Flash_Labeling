@@ -35,6 +35,14 @@
         <p class="micro-cap mb-2">Boxes</p>
         <p id="boxCount" class="text-mute">0</p>
       </div>
+      <div id="brushPanel">
+        <p class="micro-cap mb-2">Brush <span class="text-mute" style="font-size:11px">(B)</span></p>
+        <div class="row" style="gap:8px">
+          <button class="btn btn-ghost-dark btn-sm" id="brushBtn" style="min-width:90px">Brush: Off</button>
+          <input type="range" id="brushRadius" min="15" max="200" value="60" style="flex:1" title="brush radius">
+        </div>
+        <p class="text-mute hidden" id="brushStatus" style="font-size:12px;margin-top:4px;">Click a detected object to auto-attach its box (uses the precomputed detection cache).</p>
+      </div>
       <div style="margin-top:auto" class="col">
         <p class="text-mute hidden" id="roBanner" style="font-size:12px;">Read only — claim this image to annotate it.</p>
         <button class="btn btn-ghost-dark btn-sm hidden" id="claimThisBtn">Claim This Image</button>
