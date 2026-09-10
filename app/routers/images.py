@@ -183,6 +183,8 @@ def _delete_image(img: Image, session: Session) -> None:
     file_path = UPLOAD_DIR / str(img.project_id) / img.stored_name
     if file_path.exists():
         file_path.unlink()
+    from ..detector import delete_cache
+    delete_cache(img.project_id, img.stored_name)
     session.delete(img)
 
 

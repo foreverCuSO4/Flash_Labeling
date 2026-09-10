@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import BASE_DIR, UPLOAD_DIR
 from .db import init_db
-from .routers import annotations, auth, export, images, projects, users, videos
+from .routers import annotations, auth, autolabel, export, images, projects, users, videos
 
 STATIC_DIR = BASE_DIR / "static"
 
@@ -28,6 +28,7 @@ app.include_router(export.router)
 app.include_router(users.router)
 app.include_router(videos.router)
 app.include_router(videos.uploads_router)
+app.include_router(autolabel.router)
 
 
 @app.get("/api/health")

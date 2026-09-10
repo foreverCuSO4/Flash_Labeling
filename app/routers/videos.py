@@ -148,6 +148,22 @@ def _sweep_stale_uploads() -> None:
             (UPLOAD_TMP_DIR / f"{sc.stem}.part").unlink(missing_ok=True)
 
 
+def _extract_params_dict(raw: dict) -> dict:
+    """Validate sampling params (motion tiers and/or auto-scan) and return the
+    storable form. `auto` is preserved verbatim (validated separately)."""
+    from ..autolabel import AutoScanParams, ParamsError as AutoParamsError
+    try:
+        p = ExtractParams.from_dict(raw).to_dict()
+    except ParamsError:
+        raise
+    if "auto" in raw:
+        try:
+            p["auto"] = AutoScanParams.from_dict(raw["auto"]).to_dict()
+        except AutoParamsError as e:
+            raise ParamsError(f"invalid auto params: {e}") from e
+    return p
+
+
 class UploadInitIn(BaseModel):
     filename: str
     size: int
@@ -233,7 +249,7 @@ def complete_upload(upload_id: str, body: UploadCompleteIn,
     if get_membership(session, body.project_id, user.id) is None:
         raise HTTPException(403, "not a project member")
     try:
-        extract_params = ExtractParams.from_dict(body.params)
+        params_dict = _extract_params_dict(body.params)
     except ParamsError as e:
         raise HTTPException(400, f"invalid params: {e}")
 
@@ -249,7 +265,7 @@ def complete_upload(upload_id: str, body: UploadCompleteIn,
         project_id=body.project_id,
         filename=meta["filename"],
         stored_name=stored,
-        params=json.dumps(extract_params.to_dict()),
+        params=json.dumps(params_dict),
         created_by=user.id,
     )
     session.add(job)
@@ -308,6 +324,26 @@ def _cleanup_paths(*paths: Path) -> None:
         shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
 
 
+def _register_frames(session, job: VideoJob, result: dict, upload_dir: Path,
+                     tmp_dir: Path) -> None:
+    stem = Path(job.filename).stem
+    detections: dict = result.get("detections") or {}
+    from .. import detector as detector_mod
+    for f in result["frames"]:
+        shutil.move(str(tmp_dir / f["stored_name"]), str(upload_dir / f["stored_name"]))
+        session.add(Image(
+            project_id=job.project_id,
+            filename=f"{stem}_f{f['frame_idx']:06d}.jpg",
+            stored_name=f["stored_name"],
+            width=f["width"],
+            height=f["height"],
+            uploaded_by=job.created_by,
+        ))
+        rows = detections.get(f["frame_idx"])
+        if rows is not None:
+            detector_mod.write_cache(job.project_id, f["stored_name"], rows)
+
+
 def run_job(job_id: int) -> None:
     """Background worker: decode, sample frames, register them as images.
 
@@ -330,7 +366,7 @@ def run_job(job_id: int) -> None:
 
         upload_dir = UPLOAD_DIR / str(job.project_id)
         tmp_dir = upload_dir / f".job{job.id}"
-        params = ExtractParams.from_dict(json.loads(job.params))
+        raw_params = json.loads(job.params)
 
         def on_progress(decoded: int, total: int, extracted: int) -> None:
             job.decoded_frames = decoded
@@ -347,14 +383,29 @@ def run_job(job_id: int) -> None:
             return job.cancel_requested
 
         try:
-            result = extract_frames(
-                VIDEO_DIR / str(job.project_id) / job.stored_name,
-                tmp_dir,
-                params,
-                workers=_EXTRACT_WORKERS,
-                on_progress=on_progress,
-                should_cancel=should_cancel,
-            )
+            if "auto" in raw_params:
+                from .. import detector as detector_mod
+                from ..autolabel import AutoScanParams
+                from ..video import extract_frames_auto
+                result = extract_frames_auto(
+                    VIDEO_DIR / str(job.project_id) / job.stored_name,
+                    tmp_dir,
+                    AutoScanParams.from_dict(raw_params["auto"]),
+                    detector_mod.detect_frames,
+                    workers=_EXTRACT_WORKERS,
+                    on_progress=on_progress,
+                    should_cancel=should_cancel,
+                )
+            else:
+                params = ExtractParams.from_dict(raw_params)
+                result = extract_frames(
+                    VIDEO_DIR / str(job.project_id) / job.stored_name,
+                    tmp_dir,
+                    params,
+                    workers=_EXTRACT_WORKERS,
+                    on_progress=on_progress,
+                    should_cancel=should_cancel,
+                )
         except Cancelled:
             job.status = "cancelled"
             session.add(job)
@@ -370,17 +421,7 @@ def run_job(job_id: int) -> None:
             return
 
         upload_dir.mkdir(parents=True, exist_ok=True)
-        stem = Path(job.filename).stem
-        for f in result["frames"]:
-            shutil.move(str(tmp_dir / f["stored_name"]), str(upload_dir / f["stored_name"]))
-            session.add(Image(
-                project_id=job.project_id,
-                filename=f"{stem}_f{f['frame_idx']:06d}.jpg",
-                stored_name=f["stored_name"],
-                width=f["width"],
-                height=f["height"],
-                uploaded_by=job.created_by,
-            ))
+        _register_frames(session, job, result, upload_dir, tmp_dir)
         job.status = "done"
         job.progress = 1.0
         job.fps = result["fps"]
@@ -414,9 +455,11 @@ def upload_videos(
     # synchronous disk writes below (hundreds of MB per video) never block the
     # event loop — polling and other requests stay responsive during uploads.
     try:
-        extract_params = ExtractParams.from_dict(json.loads(params))
+        raw_params = json.loads(params)
     except json.JSONDecodeError:
         raise HTTPException(400, "params must be a JSON object")
+    try:
+        params_dict = _extract_params_dict(raw_params)
     except ParamsError as e:
         raise HTTPException(400, f"invalid params: {e}")
 
@@ -453,7 +496,7 @@ def upload_videos(
                 project_id=project_id,
                 filename=file.filename or stored,
                 stored_name=stored,
-                params=json.dumps(extract_params.to_dict()),
+                params=json.dumps(params_dict),
                 created_by=user.id,
             )
             session.add(job)

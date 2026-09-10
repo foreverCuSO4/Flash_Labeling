@@ -1,12 +1,18 @@
-"""Motion-adaptive frame extraction from video.
+"""Video frame extraction.
 
 Pure processing logic — no FastAPI/SQLModel imports — so it stays unit-testable.
 
-Strategy: decode every frame, score motion on a small blurred grayscale view
+Motion mode (`extract_frames`): score motion on a small blurred grayscale view
 (fraction of pixels whose abs-diff from the previous frame exceeds a threshold),
 smooth the score with an EMA, and map it to a sampling interval via configurable
 tiers: the calmer the footage, the sparser the sampling. Scene cuts (histogram
 correlation drop) always force a sample.
+
+Auto mode (`extract_frames_auto`, docs/auto_labeling.md): scan every frame
+with the detector at a low confidence floor, dilate hits ±dilate_s into
+"annotation-worthy" windows, re-decode just the windows and sample at
+sample_fps; each extracted frame's detector rows are returned alongside so
+the caller can cache them for brush annotation.
 """
 from __future__ import annotations
 
@@ -312,4 +318,297 @@ def extract_frames(
         "total_frames": shared["decoded"],
         "capped": shared["capped"],
         "frames": frames,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Auto mode: model-driven scan -> windows -> sampled extraction
+
+
+def _auto_scan_segment(
+    video_path: Path,
+    fps: float,
+    start: int,
+    end: float,
+    stride: int,
+    conf: float,
+    detector,              # Callable[[np.ndarray], list[np.ndarray rows]]
+    shared: dict,
+    detect_batch: int = 32,
+) -> None:
+    """Pass 1 for one segment: detect every `stride`-th frame.
+
+    Appends to shared["scan"]: (frame_idx, has_hit, rows) for every scanned
+    frame (rows kept — they are the brush cache payload for sampled frames).
+    """
+    from .autolabel import frame_has_hit
+    import cv2  # local import: mirrors _extract_segment style
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise RuntimeError(f"cannot open video: {video_path}")
+    try:
+        if start:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start)
+        frame_idx = start - 1
+        batch: list[tuple[int, "np.ndarray"]] = []
+
+        def flush():
+            if not batch:
+                return
+            frames = np.stack([f for _, f in batch])
+            rows_list = detector(frames)
+            for (idx, _f), rows in zip(batch, rows_list):
+                shared["scan"].append(
+                    (idx, frame_has_hit(rows, conf), rows))
+            batch.clear()
+
+        while frame_idx + 1 < end:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            frame_idx += 1
+            if not shared["tick"](frame_idx):
+                flush()
+                return  # cancelled
+            if (frame_idx - start) % stride:
+                continue
+            fh, fw = frame.shape[:2]
+            if (fw, fh) != (640, 384):
+                frame = cv2.resize(frame, (640, 384))
+            batch.append((frame_idx, frame))
+            if len(batch) >= detect_batch:
+                flush()
+        flush()
+    finally:
+        cap.release()
+
+
+def _auto_extract_segment(
+    video_path: Path,
+    out_dir: Path,
+    jpeg_quality: int,
+    fps: float,
+    targets: dict[int, str],   # frame_idx -> stored_name (uuid reserved by caller)
+    shared: dict,
+) -> dict[int, dict]:
+    """Pass 2 for one segment: re-decode and write the sample grid."""
+    import cv2
+
+    out: dict[int, dict] = {}
+    if not targets:
+        return out
+    lo, hi = min(targets), max(targets) + 1
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise RuntimeError(f"cannot open video: {video_path}")
+    try:
+        if lo:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, lo)
+        frame_idx = lo - 1
+        while frame_idx + 1 < hi:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            frame_idx += 1
+            if frame_idx not in targets:
+                continue
+            if not shared["tick"](frame_idx):
+                return out  # cancelled
+            fh, fw = frame.shape[:2]
+            stored = targets[frame_idx]
+            cv2.imwrite(str(out_dir / stored), frame,
+                        [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
+            out[frame_idx] = {
+                "frame_idx": frame_idx,
+                "timestamp": frame_idx / fps,
+                "stored_name": stored,
+                "width": fw,
+                "height": fh,
+            }
+    finally:
+        cap.release()
+    return out
+
+
+def extract_frames_auto(
+    video_path: Path,
+    out_dir: Path,
+    params,                    # app.autolabel.AutoScanParams (typed loosely: no import cycle)
+    detector,
+    *,
+    workers: int = 1,
+    on_progress: Optional[Callable[[int, int, int], None]] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
+) -> dict:
+    """Model-driven extraction (docs/auto_labeling.md item 1).
+
+    Returns {"fps", "total_frames", "capped", "frames", "detections"} where
+    `frames` matches extract_frames and `detections` maps frame_idx ->
+    detector rows (k, 21) float32 for every extracted frame.
+    """
+    from .autolabel import compute_windows, sample_frames
+
+    probe = cv2.VideoCapture(str(video_path))
+    if not probe.isOpened():
+        raise RuntimeError(f"cannot open video: {video_path}")
+    fps = probe.get(cv2.CAP_PROP_FPS)
+    if not fps or math.isnan(fps) or fps <= 0:
+        fps = 30.0
+    total = int(probe.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    probe.release()
+    if not (0 < total < 2 ** 40):
+        total = 0
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if workers > 1 and total >= workers * 900:
+        step = math.ceil(total / workers)
+        ranges = [(s, min(s + step, total)) for s in range(0, total, step)]
+    else:
+        ranges = [(0, math.inf)]
+
+    lock = threading.Lock()
+    shared: dict = {"decoded": 0, "scan": [], "cancelled": False,
+                    "errors": []}
+
+    def tick(frame_idx: int) -> bool:
+        with lock:
+            shared["decoded"] += 1
+            decoded = shared["decoded"]
+        if decoded % 30 == 0:
+            if should_cancel is not None and should_cancel():
+                return False
+            if on_progress is not None:
+                on_progress(decoded, total, 0)
+        return True
+
+    shared["tick"] = tick
+
+    def run_scan(start: int, end: float) -> None:
+        try:
+            _auto_scan_segment(video_path, fps, start, end,
+                               params.scan_stride, params.conf,
+                               detector, shared)
+        except Cancelled:
+            shared["cancelled"] = True
+        except Exception as e:  # noqa: BLE001
+            shared["errors"].append(e)
+
+    if len(ranges) == 1:
+        run_scan(*ranges[0])
+    else:
+        threads = [threading.Thread(target=run_scan, args=r, daemon=True)
+                   for r in ranges]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    if shared["errors"]:
+        raise shared["errors"][0]
+    if should_cancel is not None and should_cancel():
+        raise Cancelled()
+
+    scan = sorted(shared["scan"], key=lambda t: t[0])
+    scan_total = scan[-1][0] + 1 if scan else 0
+    hits = [False] * scan_total
+    rows_by_idx: dict[int, "np.ndarray"] = {}
+    for idx, hit, rows in scan:
+        hits[idx] = hit
+        rows_by_idx[idx] = rows
+    with lock:
+        total_decoded_pass1 = shared["decoded"]
+        shared["decoded"] = 0
+        shared["frames"] = []
+
+    # The scan timeline follows the video frame grid (stride applies to which
+    # frames get detected). Windows are dilated on a stride-adjusted fps and
+    # mapped back onto real frame indices.
+    stride = params.scan_stride
+    if stride > 1:
+        hits_strided = [hits[f] for f in range(0, scan_total, stride)]
+        windows = compute_windows(hits_strided, fps / stride, params.dilate_s)
+        windows = [(s * stride, e * stride) for s, e in windows]
+    else:
+        windows = compute_windows(hits, fps, params.dilate_s)
+    picks = sample_frames(windows, fps, params.sample_fps, params.max_frames)
+    # sample_frames stops at the cap; we recompute the uncapped count to know
+    # whether truncation happened.
+    full = sample_frames(windows, fps, params.sample_fps, max_frames=2 ** 30)
+    capped = len(full) > len(picks)
+
+    # Nearest-scanned-row lookup for picks that fell between scan grid points.
+    scanned = sorted(rows_by_idx)
+
+    def rows_for(idx: int):
+        if idx in rows_by_idx:
+            return rows_by_idx[idx]
+        for alt in range(idx + 1, idx + stride + 1):
+            if alt in rows_by_idx:
+                return rows_by_idx[alt]
+        return np.empty((0, 21), np.float32)
+
+    # Pass 2: re-decode target ranges and write JPEGs.
+    targets = {f: f"{uuid.uuid4().hex}.jpg" for f in picks}
+    detections: dict[int, "np.ndarray"] = {f: rows_for(f) for f in picks}
+
+    per_range: list[dict[int, str]] = [dict() for _ in ranges]
+    for f, stored in targets.items():
+        for i, (s, e) in enumerate(ranges):
+            if s <= f < e:
+                per_range[i][f] = stored
+                break
+
+    def tick_extract(frame_idx: int) -> bool:
+        with lock:
+            shared["decoded"] += 1
+            decoded = shared["decoded"]
+            extracted = len(shared["frames"])
+        if decoded % 30 == 0:
+            if should_cancel is not None and should_cancel():
+                return False
+            if on_progress is not None:
+                on_progress(total_decoded_pass1 + decoded, total, extracted)
+        return True
+
+    shared["tick"] = tick_extract
+
+    def run_extract(i: int) -> None:
+        try:
+            res = _auto_extract_segment(video_path, out_dir,
+                                        params.jpeg_quality, fps,
+                                        per_range[i], shared)
+            with lock:
+                shared["frames"].extend(res.values())
+        except Cancelled:
+            shared["cancelled"] = True
+        except Exception as e:  # noqa: BLE001
+            shared["errors"].append(e)
+
+    if len(ranges) == 1:
+        run_extract(0)
+    else:
+        threads = [threading.Thread(target=run_extract, args=(i,), daemon=True)
+                   for i in range(len(ranges))]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    if shared["errors"]:
+        raise shared["errors"][0]
+    if shared["cancelled"] or (should_cancel is not None and should_cancel()):
+        raise Cancelled()
+    if on_progress is not None:
+        with lock:
+            on_progress(total_decoded_pass1 + shared["decoded"], total,
+                        len(shared["frames"]))
+
+    frames = sorted(shared["frames"], key=lambda f: f["frame_idx"])
+    return {
+        "fps": fps,
+        "total_frames": total if total else total_decoded_pass1,
+        "capped": capped,
+        "frames": frames,
+        "detections": detections,
     }
