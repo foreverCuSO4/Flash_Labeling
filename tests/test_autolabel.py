@@ -14,6 +14,7 @@ from app.autolabel import (
     compute_windows,
     frame_has_hit,
     row_box_norm,
+    row_corners_norm,
     sample_frames,
 )
 from app.detector import (
@@ -106,6 +107,10 @@ class TestBrushHit:
         x, y, w, h = row_box_norm(hit)
         assert x == pytest.approx(150 / 640)
         assert w == pytest.approx(100 / 640)
+        assert np.allclose(row_corners_norm(hit), [
+            [100 / 640, 100 / 384], [100 / 640, 200 / 384],
+            [200 / 640, 200 / 384], [200 / 640, 100 / 384],
+        ])
 
     def test_miss_outside_circle(self):
         r = rows((100, 100, 200, 200, 0.9))
@@ -187,6 +192,10 @@ class TestBrushAPI:
         assert s["score"] == pytest.approx(0.9)
         assert s["x"] == pytest.approx(200 / 640)
         assert s["w"] == pytest.approx(200 / 640)
+        assert np.allclose(s["corners"], [
+            [100 / 640, 100 / 384], [100 / 640, 240 / 384],
+            [300 / 640, 240 / 384], [300 / 640, 100 / 384],
+        ])
         # second call hits the cache written by the first
         r = client.post(f"/api/images/{image['id']}/brush",
                         json={"x": 200 / 640, "y": 170 / 384, "r": 60})
