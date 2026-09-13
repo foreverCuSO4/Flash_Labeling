@@ -54,7 +54,10 @@ async function init() {
     e.preventDefault();
     hideErr(videoErr); videoOk.classList.add('hidden');
     const files = [...document.getElementById('videoInput').files];
-    if (!files.length) return;
+    if (!files.length) {
+      showErr(videoErr, 'Choose at least one video before clicking Upload & Extract.');
+      return;
+    }
     const sampling = videoParams();
     const items = files.map(file => ({
       key: fileKey(file), file, status: 'waiting', progress: 0, detail: 'Waiting to upload',
@@ -88,16 +91,6 @@ async function init() {
       renderVideoLists();
     }
   };
-
-  const fixedParams = document.getElementById('fixedParams');
-  const autoParams = document.getElementById('autoParams');
-  const onModeChange = () => {
-    const auto = document.querySelector('input[name="sampleMode"]:checked')?.value === 'auto';
-    fixedParams.classList.toggle('hidden', auto);
-    autoParams.classList.toggle('hidden', !auto);
-  };
-  document.querySelectorAll('input[name="sampleMode"]').forEach(r => r.onchange = onModeChange);
-  onModeChange();
 
   document.getElementById('videoHistoryToggle').onclick = () => {
     const history = document.getElementById('videoHistory');
@@ -248,23 +241,19 @@ function videoParams() {
     const v = parseFloat(document.getElementById(id).value);
     return Number.isFinite(v) ? v : fallback;
   };
-  const mode = document.querySelector('input[name="sampleMode"]:checked')?.value || 'fixed';
   const common = {
     max_frames: Math.round(num('maxFrames', 5000)),
     jpeg_quality: Math.round(num('jpegQuality', 90)),
   };
-  if (mode === 'auto') {
-    return {
+  return {
+    ...common,
+    auto: {
+      conf: num('autoConf', 0.2),
+      dilate_s: num('autoDilate', 3),
+      sample_fps: num('autoFps', 10),
       ...common,
-      auto: {
-        conf: num('autoConf', 0.2),
-        dilate_s: num('autoDilate', 3),
-        sample_fps: num('autoFps', 10),
-        ...common,
-      },
-    };
-  }
-  return { ...common, interval: num('sampleInterval', 0.2) };
+    },
+  };
 }
 
 async function loadVideoJobs() {
