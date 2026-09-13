@@ -1,12 +1,10 @@
 # Traffic that must never enter mihomo's TUN policy table. The Kubernetes
 # ranges are the default pod and service CIDRs used by this cluster.
+# Ports 80/443 are intentionally NOT bypassed so that fake-ip destinations
+# (e.g. chatgpt.com -> 198.18.0.x) stay inside mihomo's TUN.
 RULES=(
   "to 10.244.0.0/16 table main priority 80"
   "to 10.96.0.0/12 table main priority 80"
-  "sport 80 table main priority 90"
-  "dport 80 table main priority 90"
-  "sport 443 table main priority 90"
-  "dport 443 table main priority 90"
   "sport 8000 table main priority 90"
   "dport 8000 table main priority 90"
 )
@@ -30,7 +28,7 @@ add_rules
 sudo mkdir -p /etc/systemd/system/mihomo.service.d
 sudo tee /etc/systemd/system/mihomo.service.d/ssh-bypass.conf <<'EOF'
 [Service]
-ExecStartPost=+/bin/sh -c 'ip rule add to 10.244.0.0/16 table main priority 80 2>/dev/null || true; ip rule add to 10.96.0.0/12 table main priority 80 2>/dev/null || true; ip rule add sport 80 table main priority 90 2>/dev/null || true; ip rule add dport 80 table main priority 90 2>/dev/null || true; ip rule add sport 443 table main priority 90 2>/dev/null || true; ip rule add dport 443 table main priority 90 2>/dev/null || true; ip rule add sport 8000 table main priority 90 2>/dev/null || true; ip rule add dport 8000 table main priority 90 2>/dev/null || true'
-ExecStopPost=+/bin/sh -c 'ip rule del to 10.244.0.0/16 table main priority 80 2>/dev/null || true; ip rule del to 10.96.0.0/12 table main priority 80 2>/dev/null || true; ip rule del sport 80 table main priority 90 2>/dev/null || true; ip rule del dport 80 table main priority 90 2>/dev/null || true; ip rule del sport 443 table main priority 90 2>/dev/null || true; ip rule del dport 443 table main priority 90 2>/dev/null || true; ip rule del sport 8000 table main priority 90 2>/dev/null || true; ip rule del dport 8000 table main priority 90 2>/dev/null || true'
+ExecStartPost=+/bin/sh -c 'ip rule add to 10.244.0.0/16 table main priority 80 2>/dev/null || true; ip rule add to 10.96.0.0/12 table main priority 80 2>/dev/null || true; ip rule add sport 8000 table main priority 90 2>/dev/null || true; ip rule add dport 8000 table main priority 90 2>/dev/null || true'
+ExecStopPost=+/bin/sh -c 'ip rule del to 10.244.0.0/16 table main priority 80 2>/dev/null || true; ip rule del to 10.96.0.0/12 table main priority 80 2>/dev/null || true; ip rule del sport 8000 table main priority 90 2>/dev/null || true; ip rule del dport 8000 table main priority 90 2>/dev/null || true'
 EOF
 sudo systemctl daemon-reload
