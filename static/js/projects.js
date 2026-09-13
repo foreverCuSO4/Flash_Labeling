@@ -67,9 +67,12 @@ async function init() {
     e.preventDefault();
     hideErr(yamlErr);
     const file = document.getElementById('yamlFile').files[0];
-    if (!file) return;
+    if (!file) {
+      showErr(yamlErr, '请选择一个 .yaml 或 .yml 文件。');
+      return;
+    }
     if (!file.size) {
-      showErr(yamlErr, 'The selected YAML file is empty.');
+      showErr(yamlErr, '所选 YAML 文件为空，请选择非空的 .yaml 或 .yml 文件。');
       return;
     }
     const name = document.getElementById('yamlName').value.trim();
