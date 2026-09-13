@@ -133,6 +133,11 @@ def row_score(row: np.ndarray) -> float:
     return float(np.max(row[8:12]))
 
 
+def row_class_index(row: np.ndarray) -> int:
+    """Return the winning detector class index for one retained row."""
+    return int(np.argmax(row[8:12]))
+
+
 def row_box_norm(row: np.ndarray) -> tuple[float, float, float, float]:
     """4 角点的轴对齐外接框，归一化 center x/y + w/h。"""
     xs = row[[0, 2, 4, 6]]

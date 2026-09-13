@@ -1,8 +1,9 @@
 """Brush annotation API (docs/auto_labeling.md item 2).
 
 POST /api/images/{image_id}/brush {x, y, r} → detection suggestion inside the
-brush circle at the model's floor confidence (0.05). Geometry only — the
-annotator's currently selected class is applied on the client.
+brush circle at the model's floor confidence (0.05). The winning detector
+class is returned and applied on the client when it maps
+to a project class; otherwise the annotator's currently selected class is used.
 """
 from typing import Optional
 
@@ -12,7 +13,7 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 from .. import detector as detector_mod
-from ..autolabel import brush_hit, row_box_norm, row_corners_norm, row_score
+from ..autolabel import brush_hit, row_box_norm, row_class_index, row_corners_norm, row_score
 from ..config import UPLOAD_DIR
 from ..db import get_session
 from ..models import Image, User
@@ -52,6 +53,7 @@ def brush(image_id: int, body: BrushIn,
     return {
         "suggestion": {"x": x, "y": y, "w": w, "h": h,
                        "corners": row_corners_norm(hit),
+                       "class_index": row_class_index(hit),
                        "score": row_score(hit)},
         "cached": cached,
         "rows": int(len(rows)),

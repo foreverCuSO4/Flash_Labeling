@@ -14,6 +14,7 @@ from app.autolabel import (
     compute_windows,
     frame_has_hit,
     row_box_norm,
+    row_class_index,
     row_corners_norm,
     sample_frames,
 )
@@ -100,6 +101,11 @@ class TestWindows:
 # Brush hit-test
 
 class TestBrushHit:
+    def test_class_index_uses_highest_score(self):
+        r = rows((100, 100, 200, 200, 0.3))[0]
+        r[8:12] = [0.1, 0.8, 0.2, 0.4]
+        assert row_class_index(r) == 1
+
     def test_hit_by_center(self):
         r = rows((100, 100, 200, 200, 0.9))   # center (150,150) in 640x384
         hit = brush_hit(r, 150 / 640, 150 / 384, r_px=20, img_w=640, img_h=384)
@@ -190,6 +196,7 @@ class TestBrushAPI:
         s = body["suggestion"]
         assert s is not None
         assert s["score"] == pytest.approx(0.9)
+        assert s["class_index"] == 0
         assert s["x"] == pytest.approx(200 / 640)
         assert s["w"] == pytest.approx(200 / 640)
         assert np.allclose(s["corners"], [

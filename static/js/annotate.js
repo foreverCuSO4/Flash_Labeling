@@ -287,7 +287,13 @@ async function doBrush(pos) {
       return;
     }
     if (readOnly) return;
-    const cls = project.classes[selectedClassIdx];
+    const modelClassIndex = Number.isInteger(s.class_index) ? s.class_index : -1;
+    const detectedClassIdx = project.classes.findIndex(c => c.ord === modelClassIndex);
+    if (detectedClassIdx >= 0) {
+      selectedClassIdx = detectedClassIdx;
+      renderClasses();
+    }
+    const cls = project.classes[detectedClassIdx >= 0 ? detectedClassIdx : selectedClassIdx];
     if (!cls) return;
     const modelKeypoints = keypointsFromModelCorners(s.corners);
     const box = {
