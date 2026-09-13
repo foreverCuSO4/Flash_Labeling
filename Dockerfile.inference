@@ -1,0 +1,15 @@
+FROM python:3.14-slim
+
+WORKDIR /app
+
+COPY requirements-inference.txt .
+RUN pip install --no-cache-dir -r requirements-inference.txt
+
+COPY inference/ ./inference/
+
+ENV PYTHONPATH=/app
+EXPOSE 8787
+
+# CANN and the Ascend driver are mounted from the node at runtime. Keeping
+# them outside the image makes this image match the installed 8.2.RC1 stack.
+CMD ["/bin/sh", "-c", ". /usr/local/Ascend/ascend-toolkit/set_env.sh && exec uvicorn inference.service:app --host 0.0.0.0 --port 8787"]

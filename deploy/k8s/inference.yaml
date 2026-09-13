@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flash-labeling-infer
+  labels:
+    app.kubernetes.io/name: flash-labeling-infer
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flash-labeling-infer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: flash-labeling-infer
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k8s-npu-single
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: inference
+          image: flash-labeling-infer:local
+          imagePullPolicy: Never
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              . /usr/local/Ascend/ascend-toolkit/set_env.sh &&
+              exec uvicorn inference.service:app --host 0.0.0.0 --port 8787
+          ports:
+            - name: http
+              containerPort: 8787
+          env:
+            - name: INFER_DEVICES
+              value: "0"
+            - name: INFER_REPLICAS
+              value: "4"
+            - name: INFER_PORT
+              value: "8787"
+            - name: INFER_OM_B16
+              value: /app/data/om_models/model_b16.om
+            - name: INFER_OM_B8
+              value: /app/data/om_models/model_b8.om
+            - name: INFER_MODEL_TAG
+              value: gpu2_strict_best_snapshot
+          resources:
+            requests:
+              huawei.com/Ascend910: "1"
+            limits:
+              huawei.com/Ascend910: "1"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: ascend
+              mountPath: /usr/local/Ascend
+              readOnly: true
+            - name: om-models
+              mountPath: /app/data/om_models
+              readOnly: true
+      volumes:
+        - name: ascend
+          hostPath:
+            path: /usr/local/Ascend
+            type: Directory
+        - name: om-models
+          hostPath:
+            path: /data/users/zhujiayi/workspace/Flash_Labeling/data/om_models
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flash-labeling-infer
+  labels:
+    app.kubernetes.io/name: flash-labeling-infer
+spec:
+  type: ClusterIP
+  # kube-proxy on this bare-metal cluster currently cannot program ClusterIP
+  # rules. A headless Service makes the stable DNS name resolve directly to
+  # the inference Pod, avoiding that broken virtual-IP hop.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: flash-labeling-infer
+  ports:
+    - name: http
+      port: 8787
+      targetPort: http

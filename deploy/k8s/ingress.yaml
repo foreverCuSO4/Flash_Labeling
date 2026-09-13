@@ -1,0 +1,43 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: flash-labeling-prefix-redirect
+  annotations:
+    nginx.ingress.kubernetes.io/permanent-redirect: /flash_labeling/
+    nginx.ingress.kubernetes.io/permanent-redirect-code: "308"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /flash_labeling
+            pathType: Exact
+            backend:
+              service:
+                name: flash-labeling-app
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: flash-labeling
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /flash_labeling(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flash-labeling-app
+                port:
+                  name: http
