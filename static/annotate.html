@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Annotate — Flash Labeling</title>
-  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body style="overflow:hidden">
   <nav>
@@ -41,7 +41,7 @@
           <button class="btn btn-ghost-dark btn-sm" id="brushBtn" style="min-width:90px">Brush: Off</button>
           <input type="range" id="brushRadius" min="15" max="200" value="60" style="flex:1" title="brush radius">
         </div>
-        <p class="text-mute hidden" id="brushStatus" style="font-size:12px;margin-top:4px;">Click a detected object to auto-attach its box (uses the precomputed detection cache).</p>
+        <p class="text-mute hidden" id="brushStatus" style="font-size:12px;margin-top:4px;">Click a detected object to preview its four-corner quadrilateral (uses the precomputed detection cache).</p>
       </div>
       <div style="margin-top:auto" class="col">
         <p class="text-mute hidden" id="roBanner" style="font-size:12px;">Read only — claim this image to annotate it.</p>
@@ -57,7 +57,7 @@
       <canvas id="annotCanvas"></canvas>
     </div>
   </div>
-  <script src="/js/api.js"></script>
-  <script src="/js/annotate.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/annotate.js"></script>
 </body>
 </html>

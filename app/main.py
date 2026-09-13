@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import os
 from re import fullmatch
 
 from fastapi import FastAPI
@@ -18,7 +19,13 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="YOLO Labeling Platform", lifespan=lifespan)
+app = FastAPI(
+    title="YOLO Labeling Platform",
+    lifespan=lifespan,
+    # Set ROOT_PATH when a reverse proxy mounts the app below a URL prefix,
+    # for example ROOT_PATH=/flash_labeling.
+    root_path=os.environ.get("ROOT_PATH", ""),
+)
 
 app.include_router(auth.router)
 app.include_router(projects.router)

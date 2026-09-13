@@ -1,3 +1,20 @@
+// Pages are served from the same directory whether the app is mounted at /
+// or behind a reverse proxy such as /flash_labeling/. Derive that directory
+// from the current page so one build works in both layouts.
+const APP_BASE_PATH = (() => {
+  const path = window.location.pathname;
+  const slash = path.lastIndexOf('/');
+  const dir = path.endsWith('/') ? path : path.slice(0, slash + 1);
+  return dir === '/' ? '' : dir.replace(/\/$/, '');
+})();
+
+function appPath(path) {
+  if (typeof path !== 'string' || !path) return APP_BASE_PATH || '/';
+  if (/^(?:[a-z][a-z0-9+.-]*:)?\/\//i.test(path) || path.startsWith('data:') || path.startsWith('#')) return path;
+  if (APP_BASE_PATH && (path === APP_BASE_PATH || path.startsWith(`${APP_BASE_PATH}/`))) return path;
+  return `${APP_BASE_PATH}${path.startsWith('/') ? path : `/${path}`}` || '/';
+}
+
 const API = {
   async request(method, url, body = null, isForm = false) {
     const opts = { method, credentials: 'same-origin' };
@@ -7,7 +24,7 @@ const API = {
     } else if (body && isForm) {
       opts.body = body;
     }
-    const res = await fetch(url, opts);
+    const res = await fetch(appPath(url), opts);
     if (!res.ok) {
       let detail = res.statusText;
       try { const j = await res.json(); detail = j.detail || detail; } catch {}

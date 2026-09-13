@@ -4,18 +4,18 @@ let project = null;
 let isOwner = false;
 
 async function init() {
-  if (!projectId) { window.location.href = '/projects.html'; return; }
+  if (!projectId) { window.location.href = appPath('/projects.html'); return; }
   let user;
-  try { user = await API.get('/api/auth/me'); } catch { window.location.href = '/'; return; }
+  try { user = await API.get('/api/auth/me'); } catch { window.location.href = appPath('/'); return; }
   document.getElementById('userName').textContent = user.name;
   document.getElementById('logoutBtn').onclick = async () => {
     await API.post('/api/auth/logout');
-    window.location.href = '/';
+    window.location.href = appPath('/');
   };
 
-  try { project = await API.get(`/api/projects/${projectId}`); } catch { window.location.href = '/projects.html'; return; }
+  try { project = await API.get(`/api/projects/${projectId}`); } catch { window.location.href = appPath('/projects.html'); return; }
   isOwner = project.role === 'owner';
-  document.getElementById('backLink').href = `/project.html?id=${projectId}`;
+  document.getElementById('backLink').href = appPath(`/project.html?id=${projectId}`);
   document.getElementById('projName').textContent = project.name;
   document.getElementById('projMode').textContent = `Mode: ${project.mode}`;
   if (!isOwner) {

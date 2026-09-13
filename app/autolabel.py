@@ -146,6 +146,19 @@ def row_box_norm(row: np.ndarray) -> tuple[float, float, float, float]:
             w / MODEL_W, h / MODEL_H)
 
 
+def row_corners_norm(row: np.ndarray) -> list[list[float]]:
+    """Return the detector's four corners in normalized image coordinates.
+
+    Detector rows use model-pixel coordinates in TL → BL → BR → TR order.
+    Keep that order so the canvas can draw the same quadrilateral that the
+    model predicted instead of replacing it with its axis-aligned bbox.
+    """
+    pts = row[:8].reshape(4, 2).astype(np.float64)
+    pts[:, 0] = np.clip(pts[:, 0] / MODEL_W, 0.0, 1.0)
+    pts[:, 1] = np.clip(pts[:, 1] / MODEL_H, 0.0, 1.0)
+    return pts.tolist()
+
+
 def brush_hit(rows: np.ndarray,
               nx: float, ny: float, r_px: float,
               img_w: int, img_h: int) -> Optional[np.ndarray]:

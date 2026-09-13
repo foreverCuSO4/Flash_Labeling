@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 from .. import detector as detector_mod
-from ..autolabel import brush_hit, row_box_norm, row_score
+from ..autolabel import brush_hit, row_box_norm, row_corners_norm, row_score
 from ..config import UPLOAD_DIR
 from ..db import get_session
 from ..models import Image, User
@@ -51,6 +51,7 @@ def brush(image_id: int, body: BrushIn,
     x, y, w, h = row_box_norm(hit)
     return {
         "suggestion": {"x": x, "y": y, "w": w, "h": h,
+                       "corners": row_corners_norm(hit),
                        "score": row_score(hit)},
         "cached": cached,
         "rows": int(len(rows)),

@@ -12,23 +12,23 @@ let manageOn = false;
 const selected = new Set();
 
 async function init() {
-  if (!projectId) { window.location.href = '/projects.html'; return; }
-  try { currentUser = await API.get('/api/auth/me'); } catch { window.location.href = '/'; return; }
+  if (!projectId) { window.location.href = appPath('/projects.html'); return; }
+  try { currentUser = await API.get('/api/auth/me'); } catch { window.location.href = appPath('/'); return; }
   document.getElementById('userName').textContent = currentUser.name;
   document.getElementById('logoutBtn').onclick = async () => {
     await API.post('/api/auth/logout');
-    window.location.href = '/';
+    window.location.href = appPath('/');
   };
 
-  try { project = await API.get(`/api/projects/${projectId}`); } catch { window.location.href = '/projects.html'; return; }
+  try { project = await API.get(`/api/projects/${projectId}`); } catch { window.location.href = appPath('/projects.html'); return; }
   isMember = project.role !== null;
   document.getElementById('projName').textContent = project.name;
   document.getElementById('projRole').textContent = `${project.role || 'guest'} · ${project.mode}`;
   document.getElementById('projMeta').textContent =
     `${project.classes.map(c => c.name).join(' · ') || 'No classes'} — ${project.labeled_count}/${project.image_count} labeled`;
-  document.getElementById('uploadBtn').href = `/upload.html?project=${projectId}`;
-  document.getElementById('exportBtn').href = `/api/projects/${projectId}/export`;
-  document.getElementById('settingsBtn').href = `/project_settings.html?id=${projectId}`;
+  document.getElementById('uploadBtn').href = appPath(`/upload.html?project=${projectId}`);
+  document.getElementById('exportBtn').href = appPath(`/api/projects/${projectId}/export`);
+  document.getElementById('settingsBtn').href = appPath(`/project_settings.html?id=${projectId}`);
   if (project.guidelines) {
     document.getElementById('guidelinesPanel').classList.remove('hidden');
     document.getElementById('guidelinesView').innerHTML = marked.parse(project.guidelines);
@@ -213,7 +213,7 @@ function renderImages() {
     return `
       <div class="thumb-card${manageOn ? ' thumb-selectable' : ''}${selectedClass}" data-id="${img.id}">
         ${check}
-        <img src="${img.url}" alt="${esc(img.filename)}" loading="lazy">
+        <img src="${appPath(img.url)}" alt="${esc(img.filename)}" loading="lazy">
         <div class="thumb-info">
           <div class="row-between">
             <span style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(img.filename)}</span>
@@ -266,7 +266,7 @@ async function loadStats() {
 
 function openImage(imageId) {
   // View-only by default; the annotate page enables editing when claimed by you.
-  window.location.href = `/annotate.html?project=${projectId}&image=${imageId}`;
+  window.location.href = appPath(`/annotate.html?project=${projectId}&image=${imageId}`);
 }
 
 init();

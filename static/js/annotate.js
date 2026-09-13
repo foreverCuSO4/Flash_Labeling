@@ -7,7 +7,7 @@ let project = null;
 let imageMeta = null;
 let currentUser = null;
 let readOnly = false;
-let boxes = [];       // { class_id, x, y, w, h, keypoints: [{x,y,v}]|null, polygon: [[x,y],...]|null }
+let boxes = [];       // { class_id, x, y, w, h, corners: [[x,y],...]|null, keypoints: [{x,y,v}]|null, polygon: [[x,y],...]|null }
 let selectedClassIdx = 0;
 let selectedBoxIdx = -1;
 let drawing = false;
@@ -48,10 +48,10 @@ let brushCursor = null;   // canvas coords while the brush is on, for the circle
 let brushRadius = 60;     // display pixels (converted to image px by /scale)
 
 async function init() {
-  if (!projectId || !imageId) { window.location.href = '/projects.html'; return; }
-  try { currentUser = await API.get('/api/auth/me'); } catch { window.location.href = '/'; return; }
+  if (!projectId || !imageId) { window.location.href = appPath('/projects.html'); return; }
+  try { currentUser = await API.get('/api/auth/me'); } catch { window.location.href = appPath('/'); return; }
 
-  document.getElementById('backLink').href = `/project.html?id=${projectId}`;
+  document.getElementById('backLink').href = appPath(`/project.html?id=${projectId}`);
   project = await API.get(`/api/projects/${projectId}`);
   document.title = `Annotate — ${project.name}`;
 
@@ -141,6 +141,10 @@ async function doBrush(pos) {
     const box = {
       class_id: cls.id,
       x: s.x, y: s.y, w: s.w, h: s.h,
+      // Keep the model's oriented quadrilateral for the canvas preview. The
+      // bbox above remains the compatibility geometry sent to the annotation
+      // API, while corners are a client-side preview field.
+      corners: Array.isArray(s.corners) ? s.corners : null,
       keypoints: isPose() ? [] : null,
       polygon: null,
     };
@@ -193,11 +197,11 @@ function renderKpPanel() {
 async function loadImageMeta() {
   const images = await API.get(`/api/projects/${projectId}/images`);
   imageMeta = images.find(i => i.id === imageId);
-  if (!imageMeta) { window.location.href = `/project.html?id=${projectId}`; return; }
+  if (!imageMeta) { window.location.href = appPath(`/project.html?id=${projectId}`); return; }
   document.getElementById('imageName').textContent = imageMeta.filename;
   updateNavInfo(images);
   imgElement.onload = () => { imgLoaded = true; fitCanvas(); };
-  imgElement.src = imageMeta.url;
+  imgElement.src = appPath(imageMeta.url);
 }
 
 function updateNavInfo(images) {
@@ -208,7 +212,7 @@ function updateNavInfo(images) {
 async function loadAnnotations() {
   try {
     const anns = await API.get(`/api/images/${imageId}/annotations`);
-    boxes = anns.map(a => ({ class_id: a.class_id, x: a.x, y: a.y, w: a.w, h: a.h, keypoints: a.keypoints || null, polygon: a.polygon || null }));
+    boxes = anns.map(a => ({ class_id: a.class_id, x: a.x, y: a.y, w: a.w, h: a.h, corners: null, keypoints: a.keypoints || null, polygon: a.polygon || null }));
     updateBoxCount();
     redraw();
   } catch {}
@@ -236,6 +240,39 @@ function boxToCanvas(b) {
 function classColor(classId) {
   const idx = project.classes.findIndex(c => c.id === classId);
   return CLASS_COLORS[(idx >= 0 ? idx : 0) % CLASS_COLORS.length];
+}
+
+function drawModelCorners(corners, color, selected, label) {
+  if (!Array.isArray(corners) || corners.length < 3) return false;
+  const pts = corners
+    .filter(p => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]))
+    .map(([nx, ny]) => toCanvas(nx, ny));
+  if (pts.length < 3) return false;
+
+  ctx.beginPath();
+  pts.forEach(([px, py], pi) => { pi ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+  ctx.closePath();
+  ctx.fillStyle = color + '26';  // ~15% fill so the image stays readable
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = selected ? 3 : 2;
+  ctx.stroke();
+  ctx.font = '12px serif';
+  ctx.fillStyle = color;
+  ctx.fillText(label || '?', pts[0][0] + 4, pts[0][1] - 6);
+
+  // Show the four predicted corner points and their model order on the
+  // preview. They are deliberately separate from project keypoints below.
+  pts.forEach(([px, py], pi) => {
+    ctx.beginPath(); ctx.arc(px, py, selected ? 4 : 3, 0, Math.PI * 2);
+    ctx.fillStyle = color; ctx.fill();
+    if (selected) {
+      ctx.font = '10px serif';
+      ctx.fillStyle = color;
+      ctx.fillText(String(pi), px + 6, py - 4);
+    }
+  });
+  return true;
 }
 
 function redraw() {
@@ -272,13 +309,16 @@ function redraw() {
       return;
     }
 
-    const [x, y, w, h] = boxToCanvas(b);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = i === selectedBoxIdx ? 3 : 2;
-    ctx.strokeRect(x, y, w, h);
-    ctx.font = '12px serif';
-    ctx.fillStyle = color;
-    ctx.fillText(cls ? cls.name : '?', x + 4, y - 4);
+    const hasCorners = drawModelCorners(b.corners, color, i === selectedBoxIdx, cls ? cls.name : '?');
+    if (!hasCorners) {
+      const [x, y, w, h] = boxToCanvas(b);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = i === selectedBoxIdx ? 3 : 2;
+      ctx.strokeRect(x, y, w, h);
+      ctx.font = '12px serif';
+      ctx.fillStyle = color;
+      ctx.fillText(cls ? cls.name : '?', x + 4, y - 4);
+    }
 
     if (b.keypoints) {
       // skeleton edges between labeled keypoints
@@ -545,6 +585,7 @@ function onMouseUp(e) {
     class_id: cls.id,
     x: (nx1 + nx2) / 2, y: (ny1 + ny2) / 2,
     w: nx2 - nx1, h: ny2 - ny1,
+    corners: null,
     keypoints: isPose() ? [] : null,
   });
   selectedBoxIdx = boxes.length - 1;
@@ -590,7 +631,7 @@ function placeKeypoint(pos) {
   if (placing.nextKp >= project.keypoints.length) {
     if (placing.boxIdx === null && placing.draft.some(k => k.v > 0)) {
       const cls = project.classes[selectedClassIdx];
-      boxes.push({ class_id: cls.id, ...kpsBBox(placing.draft), keypoints: placing.draft, polygon: null });
+      boxes.push({ class_id: cls.id, ...kpsBBox(placing.draft), corners: null, keypoints: placing.draft, polygon: null });
       selectedBoxIdx = boxes.length - 1;
       updateBoxCount();
     }
@@ -630,7 +671,7 @@ function closeDraft() {
   if (polyDraft.length >= 3) {
     const cls = project.classes[selectedClassIdx];
     if (cls) {
-      boxes.push({ class_id: cls.id, ...polyBBox(polyDraft), keypoints: null, polygon: polyDraft });
+      boxes.push({ class_id: cls.id, ...polyBBox(polyDraft), corners: null, keypoints: null, polygon: polyDraft });
       selectedBoxIdx = boxes.length - 1;
     }
   }
@@ -708,7 +749,10 @@ async function save() {
   if (placing) { showErr(errMsg, 'Finish or cancel the current keypoint placement first (Esc).'); return; }
   if (polyDraft) { showErr(errMsg, 'Finish or cancel the current polygon first (Enter to close, Esc to cancel).'); return; }
   try {
-    await API.put(`/api/images/${imageId}/annotations`, boxes);
+    // Model corners are only a visual preview; the annotation API persists
+    // the compatible bbox/keypoint/polygon fields.
+    const payload = boxes.map(({ corners, ...box }) => box);
+    await API.put(`/api/images/${imageId}/annotations`, payload);
     okMsg.textContent = `Saved ${boxes.length} instance(s).`;
     okMsg.classList.remove('hidden');
   } catch (err) { showErr(errMsg, err.detail || 'Save failed'); }
@@ -734,7 +778,7 @@ async function clearAll() {
 async function releaseClaim() {
   try {
     await API.post(`/api/projects/${projectId}/images/${imageId}/release`);
-    window.location.href = `/project.html?id=${projectId}`;
+    window.location.href = appPath(`/project.html?id=${projectId}`);
   } catch (err) { showErr(errMsg, err.detail || 'Release failed'); }
 }
 
@@ -744,7 +788,7 @@ async function navigate(dir) {
     const idx = images.findIndex(i => i.id === imageId);
     const next = images[idx + dir];
     if (!next) return;
-    window.location.href = `/annotate.html?project=${projectId}&image=${next.id}`;
+  window.location.href = appPath(`/annotate.html?project=${projectId}&image=${next.id}`);
   } catch {}
 }
 

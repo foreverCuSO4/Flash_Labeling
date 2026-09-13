@@ -29,11 +29,11 @@ document.getElementById('authForm').onsubmit = async (e) => {
     } else {
       await API.post('/api/auth/login', { email, password });
     }
-    window.location.href = '/projects.html';
+    window.location.href = appPath('/projects.html');
   } catch (err) {
     showErr(errMsg, err.detail || 'Request failed');
   }
 };
 
 // Redirect if already logged in
-API.get('/api/auth/me').then(() => { window.location.href = '/projects.html'; }).catch(() => {});
+API.get('/api/auth/me').then(() => { window.location.href = appPath('/projects.html'); }).catch(() => {});

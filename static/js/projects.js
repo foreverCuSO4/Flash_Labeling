@@ -1,11 +1,11 @@
 async function init() {
   let user;
-  try { user = await API.get('/api/auth/me'); } catch { window.location.href = '/'; return; }
+  try { user = await API.get('/api/auth/me'); } catch { window.location.href = appPath('/'); return; }
   document.getElementById('userName').textContent = user.name;
 
   const avatarImg = document.getElementById('userAvatar');
   const avatarInput = document.getElementById('avatarInput');
-  avatarImg.src = `/api/users/${user.id}/avatar`;
+  avatarImg.src = appPath(`/api/users/${user.id}/avatar`);
   document.getElementById('avatarBtn').onclick = () => avatarInput.click();
   avatarInput.onchange = async () => {
     if (!avatarInput.files.length) return;
@@ -13,14 +13,14 @@ async function init() {
     fd.append('file', avatarInput.files[0]);
     try {
       await API.post('/api/users/me/avatar', fd, true);
-      avatarImg.src = `/api/users/${user.id}/avatar?v=${Date.now()}`;
+      avatarImg.src = appPath(`/api/users/${user.id}/avatar?v=${Date.now()}`);
     } catch (err) { alert(err.detail || 'Avatar upload failed'); }
     avatarInput.value = '';
   };
 
   document.getElementById('logoutBtn').onclick = async () => {
     await API.post('/api/auth/logout');
-    window.location.href = '/';
+    window.location.href = appPath('/');
   };
 
   const createPanel = document.getElementById('createPanel');
@@ -80,7 +80,7 @@ async function init() {
     document.getElementById('yamlName').value = '';
     createPanel.classList.add('hidden');
     loadProjects();
-    window.location.href = `/project.html?id=${proj.id}`;
+    window.location.href = appPath(`/project.html?id=${proj.id}`);
   };
 
   loadProjects();
@@ -93,7 +93,7 @@ async function loadProjects() {
     const projects = await API.get('/api/projects');
     emptyMsg.classList.toggle('hidden', projects.length > 0);
     list.innerHTML = projects.map(p => `
-      <div class="panel" style="cursor:pointer" onclick="window.location.href='/project.html?id=${p.id}'">
+      <div class="panel" style="cursor:pointer" onclick="window.location.href=appPath('/project.html?id=${p.id}')">
         <p class="micro-cap">${esc(p.role || 'view')}</p>
         <h3 style="font-family:var(--font-display);font-size:24px;text-transform:uppercase;letter-spacing:0.96px;">${esc(p.name)}</h3>
         <p class="text-mute mt-2"><span class="badge">${p.mode}</span> ${p.classes.map(c => esc(c.name)).join(' · ') || 'No classes'}</p>
