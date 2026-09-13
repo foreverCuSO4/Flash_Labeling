@@ -29,6 +29,8 @@ const canvas = document.getElementById('annotCanvas');
 const ctx = canvas.getContext('2d');
 const wrap = document.querySelector('.annotate-canvas-wrap');
 const classList = document.getElementById('classList');
+const classPickerBtn = document.getElementById('classPickerBtn');
+const classPickerCard = document.getElementById('classPickerCard');
 const boxCount = document.getElementById('boxCount');
 const errMsg = document.getElementById('errMsg');
 const okMsg = document.getElementById('okMsg');
@@ -79,6 +81,7 @@ async function init() {
   brushPanel.classList.toggle('hidden', isSeg());
   brushBtn.onclick = () => setBrush(!brushOn);
   brushRadiusInput.oninput = () => { brushRadius = parseInt(brushRadiusInput.value) || 60; redraw(); };
+  classPickerBtn.onclick = () => setClassPicker(classPickerCard.classList.contains('hidden'));
   shortcutBtn.onclick = () => setShortcutCard(shortcutCard.classList.contains('hidden'));
   canvas.addEventListener('mousedown', onMouseDown);
   canvas.addEventListener('mousemove', onMouseMove);
@@ -145,6 +148,11 @@ function setBrush(on) {
 function setShortcutCard(open) {
   shortcutCard.classList.toggle('hidden', !open);
   shortcutBtn.setAttribute('aria-expanded', String(open));
+}
+
+function setClassPicker(open) {
+  classPickerCard.classList.toggle('hidden', !open);
+  classPickerBtn.setAttribute('aria-expanded', String(open));
 }
 
 function onCanvasWheel(e) {
@@ -231,8 +239,10 @@ async function doBrush(pos) {
 }
 
 function renderClasses() {
+  const selected = project.classes[selectedClassIdx];
+  classPickerBtn.textContent = selected ? `Class: ${selected.name}` : 'Select class';
   classList.innerHTML = project.classes.map((c, i) => `
-    <div class="class-item ${i === selectedClassIdx ? 'active' : ''}" data-idx="${i}" title="${esc(c.description || '')}">
+    <div class="class-item ${i === selectedClassIdx ? 'active' : ''}" data-idx="${i}" role="option" aria-selected="${i === selectedClassIdx}" title="${esc(c.description || '')}">
       <span class="class-swatch" style="background:${CLASS_COLORS[i % CLASS_COLORS.length]}"></span>
       <span>${esc(c.name)}</span>
       <span class="text-mute" style="margin-left:auto;font-size:12px">${i + 1}</span>
@@ -240,16 +250,19 @@ function renderClasses() {
     ${c.description ? `<p class="text-mute" style="font-size:11px;padding:0 12px 4px;">${esc(c.description)}</p>` : ''}
   `).join('');
   classList.querySelectorAll('.class-item').forEach(el => {
-    el.onclick = () => { selectedClassIdx = parseInt(el.dataset.idx); renderClasses(); };
+    el.onclick = () => {
+      selectedClassIdx = parseInt(el.dataset.idx);
+      renderClasses();
+      setClassPicker(false);
+    };
   });
 }
 
 function renderKpPanel() {
   kpList.innerHTML = project.keypoints.map((name, i) => {
     const active = placing && i === placing.nextKp ? ' active' : '';
-    return `<div class="class-item${active}" data-kp="${i}">
-      <span class="text-mute" style="width:18px;font-size:11px">${i}</span><span>${esc(name)}</span>
-    </div>`;
+    const done = placing && i < placing.nextKp ? ' done' : '';
+    return `<div class="kp-tile${active}${done}" data-kp="${i}" title="${esc(name)}" aria-label="${esc(name)}">${i}</div>`;
   }).join('');
   if (placing) {
     kpStatus.textContent = `Click: ${project.keypoints[placing.nextKp]} (v=${placingVis}, V to toggle, Esc to cancel)`;
@@ -735,6 +748,46 @@ function cancelPlacing() {
   redraw();
 }
 
+function finishPlacingForNavigation() {
+  if (!placing) return false;
+  if (placing.boxIdx === null) {
+    // Keep a keypoints-first draft only when it has at least one visible
+    // point; the remaining points can be explicitly unlabeled (v=0).
+    if (!placing.draft.some(k => k.v > 0)) {
+      cancelPlacing();
+      return false;
+    }
+    const cls = project.classes[selectedClassIdx];
+    if (!cls) {
+      cancelPlacing();
+      return false;
+    }
+    const keypoints = placing.draft.slice();
+    while (keypoints.length < project.keypoints.length) {
+      keypoints.push({ x: 0, y: 0, v: 0 });
+    }
+    boxes.push({ class_id: cls.id, ...kpsBBox(keypoints), corners: null, keypoints, polygon: null });
+    selectedBoxIdx = boxes.length - 1;
+    updateBoxCount();
+  } else {
+    const box = boxes[placing.boxIdx];
+    if (!box) {
+      cancelPlacing();
+      return false;
+    }
+    if (!Array.isArray(box.keypoints)) box.keypoints = [];
+    while (box.keypoints.length < project.keypoints.length) {
+      box.keypoints.push({ x: 0, y: 0, v: 0 });
+    }
+  }
+  placing = null;
+  placingVis = 2;
+  renderKpPanel();
+  redraw();
+  autoSave();
+  return true;
+}
+
 // --- segment mode: polygon draft -------------------------------------------
 
 function addDraftPoint(pos) {
@@ -796,6 +849,7 @@ function onKeyDown(e) {
   if (n >= 1 && n <= Math.min(project.classes.length, 8)) {
     selectedClassIdx = n - 1;
     renderClasses();
+    setClassPicker(false);
     return;
   }
   if ((e.key === 'b' || e.key === 'B') && !isSeg()) {
@@ -821,6 +875,7 @@ function onKeyDown(e) {
   if (e.key === 'Enter') { if (polyDraft) { closeDraft(); return; } }
   if (e.key === 'Escape') {
     if (!shortcutCard.classList.contains('hidden')) { setShortcutCard(false); return; }
+    if (!classPickerCard.classList.contains('hidden')) { setClassPicker(false); return; }
     if (placing) { cancelPlacing(); return; }
     if (polyDraft) { cancelDraft(); return; }
     selectedBoxIdx = -1; drawing = false; redraw();
@@ -891,14 +946,11 @@ async function releaseClaim() {
 
 async function navigate(dir) {
   try {
-    if (placing) {
-      showErr(errMsg, 'Finish or cancel the current keypoint placement first (Esc).');
-      return;
-    }
-    if (polyDraft) {
-      showErr(errMsg, 'Finish or cancel the current polygon first (Enter to close, Esc to cancel).');
-      return;
-    }
+    // Finish pending brush work before deciding how to leave an unfinished
+    // keypoint draft. This avoids losing a brush-created pose annotation.
+    await flushPendingOperations();
+    if (placing) finishPlacingForNavigation();
+    if (polyDraft) cancelDraft();
     await flushPendingOperations();
     const images = await API.get(`/api/projects/${projectId}/images`);
     const idx = images.findIndex(i => i.id === imageId);

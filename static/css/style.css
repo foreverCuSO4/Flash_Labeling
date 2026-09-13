@@ -291,18 +291,55 @@ th {
 }
 .annotate-class-section {
   min-height: 0;
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
+  flex: 0 0 auto;
 }
-.annotate-class-list {
-  min-height: 0;
-  flex: 1 1 0;
+.class-picker-wrap { position: relative; }
+.class-picker-btn { width: 100%; text-align: left; }
+.class-picker-card {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 5;
+  max-height: min(50vh, 360px, calc(100vh - 160px));
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-right: 4px;
+  padding: 6px;
+  border: 1px solid var(--hairline-dark);
+  border-radius: var(--rounded-xs);
+  background: var(--canvas-night-soft);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.58);
 }
-#kpPanel { min-height: 0; max-height: 32%; overflow-y: auto; }
+.class-picker-list {
+  gap: 2px;
+}
+.kp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 32px);
+  gap: 5px;
+  max-height: 150px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.kp-tile {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--hairline-dark);
+  border-radius: 4px;
+  color: var(--on-primary-mute);
+  font-size: 12px;
+  line-height: 1;
+}
+.kp-tile.active {
+  border-color: var(--on-primary);
+  background: var(--on-primary);
+  color: var(--ink);
+}
+.kp-tile.done { background: rgba(255,255,255,0.12); }
+#kpPanel { min-height: 0; max-height: 200px; overflow-y: auto; }
 .annotate-controls { position: relative; flex-shrink: 0; }
 .annotate-canvas-wrap {
   flex: 1;

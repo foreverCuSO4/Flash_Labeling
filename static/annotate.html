@@ -21,14 +21,19 @@
   <div class="annotate-layout">
     <div class="annotate-sidebar">
       <div class="annotate-class-section">
-        <p class="micro-cap mb-2">Classes</p>
-        <div id="classList" class="col annotate-class-list"></div>
+        <p class="micro-cap mb-2">Class</p>
+        <div class="class-picker-wrap">
+          <button class="btn btn-ghost-dark btn-sm class-picker-btn" id="classPickerBtn" type="button" aria-expanded="false" aria-controls="classPickerCard">Select class</button>
+          <div id="classPickerCard" class="class-picker-card hidden" role="listbox">
+            <div id="classList" class="col class-picker-list"></div>
+          </div>
+        </div>
         <p class="text-mute" style="font-size:12px;margin-top:8px;">Keys 1-8 to select</p>
         <p class="text-mute hidden" id="segHint" style="font-size:12px;margin-top:4px;">Polygon: click to add points, click first point / double-click / Enter to close, Esc to cancel. Drag vertices of the selected polygon to adjust.</p>
       </div>
       <div id="kpPanel" class="hidden">
         <p class="micro-cap mb-2">Keypoints</p>
-        <div id="kpList" class="col" style="gap:2px"></div>
+        <div id="kpList" class="kp-grid"></div>
         <p id="kpStatus" class="text-mute" style="font-size:12px;margin-top:8px;"></p>
       </div>
       <div>
