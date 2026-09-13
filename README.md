@@ -32,6 +32,47 @@ pip install pytest httpx   # dev deps
 uvicorn app.main:app --reload --port 8000
 ```
 
+### Domain sub-path deployment
+
+The app can be published below a domain path such as
+`https://example.com/flash_labeling/`. Start FastAPI with the matching
+`ROOT_PATH` and keep the app bound to localhost:
+
+```bash
+ROOT_PATH=/flash_labeling uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Then install [deploy/nginx/flash_labeling.conf](deploy/nginx/flash_labeling.conf)
+as an HTTP server configuration (or copy its `location` blocks into the
+existing HTTPS server). It already declares `server_name 60.165.239.63;`.
+The proxy strips `/flash_labeling` before forwarding to FastAPI, while the
+frontend keeps that prefix for API calls, navigation, images, avatars, and
+resumable upload chunks. The same files still work when served directly at `/`.
+
+For Docker, pass the same setting and bind the published port locally:
+
+```bash
+docker run -p 127.0.0.1:8000:8000 \
+  -e ROOT_PATH=/flash_labeling \
+  -v fl_data:/app/data flash-labeling
+```
+
+The existing [run_docker.sh](run_docker.sh) now has the production sub-path
+values fixed in the script, so use it without arguments:
+
+```bash
+./run_docker.sh
+```
+
+The script currently fixes `INFER_URL` to `http://172.17.0.1:8787`, which is the
+host gateway used by this server. If the Docker bridge gateway differs, edit
+the `INFER_URL` constant in [run_docker.sh](run_docker.sh); the container's
+`127.0.0.1` is its own loopback.
+
+```bash
+./run_docker.sh
+```
+
 ## Test
 
 ```bash
@@ -62,7 +103,7 @@ python scripts/smoke_test.py http://host:port # against remote
 - **Dataset management (owner)**: a Manage mode on the project page lets you select images (all / clear / per-card checkboxes) and bulk-delete them with their annotations
 - All projects are visible to every registered user; guests can browse images and annotations read-only, and join any project from its page to start claiming and annotating
 - Canvas: draw, select, delete; drag keypoints; keyboard shortcuts
-- **Video import**: upload videos (e.g. 100fps footage) on the upload page; frames are extracted with motion-adaptive sampling — static scenes sample sparsely (default 1 frame/10s), fast motion densely (default 5fps), with scene-cut forcing; sampling tiers are adjustable per upload; extracted frames land in the project as regular images; original videos are kept under `data/videos/`
+- **Video import**: upload videos (e.g. 100fps footage) on the upload page; regular extraction samples at a fixed, configurable interval (default 0.2s); extracted frames land in the project as regular images; original videos are kept under `data/videos/`
 - Extraction is **parallel**: each video is split into frame ranges decoded on up to `VIDEO_EXTRACT_WORKERS` threads (default 4) while jobs run one at a time; a single video runs several times faster than realtime decode would
 - **Model auto-scan (optional)**: with the [NPU inference backend](docs/inference_backend.md) running, video import offers a *Model auto-scan* mode — the whole video is scanned by the model at a low confidence floor (default 0.2), hit frames are dilated ±3s and unioned into "annotation-worthy" windows, and only windows are sampled (default 10fps); per-frame detections are cached (`data/cache/det/`) for brush annotation
 - **Brush annotation (auto-assist)**: on the annotate page toggle the brush (`B`), click inside the circle and a detection under the cursor (model floor 0.05) becomes a box with the currently selected class — geometry is snapped, semantics stay with the annotator; works on cached or on-demand detections
@@ -90,3 +131,48 @@ python scripts/smoke_test.py http://host:port # against remote
 | V | Toggle keypoint visibility (pose mode, while placing) |
 | Delete / Backspace | Delete selected box/instance, or cancel polygon draft |
 | Escape | Deselect / cancel placement or polygon draft |
+
+### Kubernetes deployment (canonical)
+
+This server uses the existing Kubernetes `ingress-nginx` and Ascend device
+plugin. The production deployment is a single application Pod plus a single
+Ascend inference Pod. Application state stays in the node-local data directory
+and the inference Pod mounts the node's CANN 8.2.RC1 installation and the OM
+files from `data/om_models`.
+
+After a kubeconfig is available and the current user has permission to import
+images into the Kubernetes containerd namespace, rebuild and start the complete
+stack with no arguments:
+
+```bash
+./rebuild.sh
+./start.sh
+```
+
+The familiar `build_docker.sh` and `run_docker.sh` names are no-argument
+wrappers for these Kubernetes commands. The application intentionally remains
+at one replica because SQLite and uploaded files use node-local storage.
+
+The Kubernetes Ingress exposes:
+
+```text
+http://60.165.239.63/flash_labeling/
+```
+
+The standalone `deploy/nginx/flash_labeling.conf` remains available as a
+fallback for a host-level Nginx installation; it is not consumed by the
+Kubernetes ingress controller.
+
+For a first-time setup on this server, run the following three commands in
+order. `setup_k8s.sh` only copies the cluster access file into your user
+account; it does not change Kubernetes resources.
+
+```bash
+./setup_k8s.sh
+./rebuild.sh
+./start.sh
+```
+
+The Kubernetes startup script creates a persistent `flash-labeling-secrets`
+Secret with a generated session signing key on first start and reuses it on
+later restarts.

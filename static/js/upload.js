@@ -1,22 +1,23 @@
-/* Upload page: image upload + video import (chunked, resumable, parallel). */
+/* Upload page: bulk image upload + parallel, resumable video import. */
 const params = new URLSearchParams(window.location.search);
 const projectId = params.get('project');
 let currentUser = null;
 let project = null;
-let videoJobs = null;
+let videoJobs = [];
 let videoPollTimer = null;
+const uploadItems = new Map();
 
 async function init() {
-  if (!projectId) { window.location.href = '/projects.html'; return; }
-  try { currentUser = await API.get('/api/auth/me'); } catch { window.location.href = '/'; return; }
+  if (!projectId) { window.location.href = appPath('/projects.html'); return; }
+  try { currentUser = await API.get('/api/auth/me'); } catch { window.location.href = appPath('/'); return; }
   document.getElementById('userName').textContent = currentUser.name;
   document.getElementById('logoutBtn').onclick = async () => {
     await API.post('/api/auth/logout');
-    window.location.href = '/';
+    window.location.href = appPath('/');
   };
 
-  try { project = await API.get(`/api/projects/${projectId}`); } catch { window.location.href = '/projects.html'; return; }
-  document.getElementById('backLink').href = `/project.html?id=${projectId}`;
+  try { project = await API.get(`/api/projects/${projectId}`); } catch { window.location.href = appPath('/projects.html'); return; }
+  document.getElementById('backLink').href = appPath(`/project.html?id=${projectId}`);
   document.getElementById('projName').textContent = project.name;
   document.getElementById('projRole').textContent = `${project.role || 'guest'} · ${project.mode}`;
 
@@ -46,70 +47,104 @@ async function init() {
     } catch (err) { showErr(uploadErr, err.detail || 'Upload failed'); }
   };
 
-  // Video import — chunked resumable upload (100fps videos are GB-scale).
   const videoErr = document.getElementById('videoErr');
   const videoOk = document.getElementById('videoOk');
   const videoBtn = document.getElementById('videoSubmitBtn');
-  const videoUploading = document.getElementById('videoUploading');
-  const videoUploadFill = document.getElementById('videoUploadFill');
-  const videoUploadStatus = document.getElementById('videoUploadStatus');
   document.getElementById('videoForm').onsubmit = async (e) => {
     e.preventDefault();
     hideErr(videoErr); videoOk.classList.add('hidden');
     const files = [...document.getElementById('videoInput').files];
     if (!files.length) return;
     const sampling = videoParams();
+    const items = files.map(file => ({
+      key: fileKey(file), file, status: 'waiting', progress: 0, detail: 'Waiting to upload',
+    }));
+    items.forEach(item => uploadItems.set(item.key, item));
+    renderVideoLists();
     videoBtn.disabled = true;
-    videoUploading.classList.remove('hidden');
-    let queued = 0;
+
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < items.length) {
+        const item = items[cursor++];
+        await uploadVideo(item, sampling);
+      }
+    };
     try {
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i];
-        if (!f.size) { showErr(videoErr, `${f.name} is empty`); continue; }
-        const which = files.length > 1 ? ` (${i + 1}/${files.length})` : '';
-        const uploadId = await chunkedUpload(f, (done, total) => {
-          const pct = Math.round(100 * done / total);
-          videoUploadFill.style.width = `${pct}%`;
-          videoUploadStatus.textContent =
-            `Uploading${which} ${f.name}… ${pct}% (${Math.round(done / 1048576)} / ${Math.round(total / 1048576)} MB)`;
-        });
-        videoUploadFill.style.width = '100%';
-        videoUploadStatus.textContent = `Queued for extraction${which}…`;
-        await API.post(`/api/uploads/${uploadId}/complete`, { project_id: parseInt(projectId), params: sampling });
-        localStorage.removeItem(resumeKey(f));
-        queued++;
-      }
+      const workers = Math.min(2, items.length);
+      await Promise.all(Array.from({ length: workers }, worker));
+      const queued = items.filter(item => item.jobId).length;
+      const failed = items.filter(item => item.status === 'failed').length;
       if (queued) {
-        videoOk.textContent = `${queued} video(s) queued for extraction.`;
+        videoOk.textContent = `${queued} video(s) queued for extraction${failed ? `; ${failed} failed` : ''}.`;
         videoOk.classList.remove('hidden');
-        document.getElementById('videoInput').value = '';
-        loadVideoJobs();
       }
+      document.getElementById('videoInput').value = '';
+      await loadVideoJobs();
     } catch (err) {
-      const msg = typeof err.detail === 'string' ? err.detail : 'Upload failed';
-      showErr(videoErr, `${msg} — progress is saved, submit again to resume.`);
+      showErr(videoErr, err.detail || 'Upload failed');
+    } finally {
+      videoBtn.disabled = false;
+      renderVideoLists();
     }
-    videoBtn.disabled = false;
-    videoUploading.classList.add('hidden');
   };
 
-  // Sampling-mode radio: swap the motion tiers panel with the auto-scan panel.
+  const fixedParams = document.getElementById('fixedParams');
   const autoParams = document.getElementById('autoParams');
-  const motionParams = document.getElementById('motionParams');
   const onModeChange = () => {
     const auto = document.querySelector('input[name="sampleMode"]:checked')?.value === 'auto';
+    fixedParams.classList.toggle('hidden', auto);
     autoParams.classList.toggle('hidden', !auto);
-    motionParams.classList.toggle('hidden', auto);
   };
   document.querySelectorAll('input[name="sampleMode"]').forEach(r => r.onchange = onModeChange);
+  onModeChange();
+
+  document.getElementById('videoHistoryToggle').onclick = () => {
+    const history = document.getElementById('videoHistory');
+    const hidden = history.classList.toggle('hidden');
+    document.getElementById('videoHistoryToggle').textContent = hidden
+      ? 'View completed videos' : 'Hide completed videos';
+    if (!hidden) renderVideoHistory();
+  };
+  document.getElementById('videoDetailsClose').onclick = () => {
+    document.getElementById('videoDetailsDialog').close();
+  };
 
   loadVideoJobs();
 }
 
+function fileKey(file) {
+  return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+async function uploadVideo(item, sampling) {
+  const file = item.file;
+  if (!file.size) {
+    item.status = 'failed'; item.error = `${file.name} is empty`; renderVideoLists(); return;
+  }
+  item.status = 'uploading'; item.detail = 'Starting resumable upload'; renderVideoLists();
+  try {
+    const uploadId = await chunkedUpload(file, (done, total) => {
+      item.progress = total ? done / total : 0;
+      item.detail = `Uploading ${Math.round(done / 1048576)} / ${Math.round(total / 1048576)} MB`;
+      renderVideoLists();
+    });
+    item.progress = 1; item.status = 'queued'; item.detail = 'Queued for extraction'; renderVideoLists();
+    const job = await API.post(`/api/uploads/${uploadId}/complete`, {
+      project_id: parseInt(projectId), params: sampling,
+    });
+    item.jobId = job.id;
+    item.status = job.status || 'pending';
+    item.detail = 'Waiting for extraction';
+    localStorage.removeItem(resumeKey(file));
+  } catch (err) {
+    const msg = typeof err.detail === 'string' ? err.detail : 'Upload failed';
+    item.status = 'failed'; item.error = `${msg} — submit again to resume.`;
+  }
+  renderVideoLists();
+}
+
 // --- Chunked resumable video upload ------------------------------------------
-// 16 MiB chunks, up to UPLOAD_CONCURRENCY in flight per file. The server
-// accepts out-of-order chunks and tracks received ranges, so each request is
-// small, retries are idempotent, and reloads resume from the server's state.
 const CHUNK_SIZE = 16 * 1024 * 1024;
 const UPLOAD_CONCURRENCY = 4;
 
@@ -120,7 +155,7 @@ function resumeKey(file) {
 function uploadChunk(url, blob, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('PUT', url);
+    xhr.open('PUT', appPath(url));
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     xhr.upload.onprogress = (e) => { if (onProgress) onProgress(e.loaded); };
     xhr.onload = () => {
@@ -140,8 +175,6 @@ function rangesCover(ranges, start, end) {
 
 function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
 
-// Upload `file`, resuming from the server's received ranges. Four chunks are
-// kept in flight; onProgress(bytes_done, total) fires on every movement.
 async function chunkedUpload(file, onProgress, concurrency = UPLOAD_CONCURRENCY) {
   const key = resumeKey(file);
   const size = file.size;
@@ -152,7 +185,7 @@ async function chunkedUpload(file, onProgress, concurrency = UPLOAD_CONCURRENCY)
       const st = await API.get(`/api/uploads/${uploadId}`);
       if (st.size === size) ranges = st.ranges || (st.received ? [[0, st.received]] : []);
       else { uploadId = null; localStorage.removeItem(key); }
-    } catch { uploadId = null; localStorage.removeItem(key); }  // gone or stale
+    } catch { uploadId = null; localStorage.removeItem(key); }
   }
   if (!uploadId) {
     const init = await API.post('/api/uploads', { filename: file.name, size });
@@ -160,13 +193,10 @@ async function chunkedUpload(file, onProgress, concurrency = UPLOAD_CONCURRENCY)
     localStorage.setItem(key, uploadId);
   }
 
-  // Up to 3 passes: normally one pass plus a verify; a pass is repeated only if
-  // the server reports something different from what we believe we sent.
   for (let pass = 0; pass < 3; pass++) {
     const st = await API.get(`/api/uploads/${uploadId}`);
     if (st.received >= size) return uploadId;
     ranges = st.ranges || (st.received ? [[0, st.received]] : []);
-
     const bounds = [];
     for (let s = 0; s < size; s += CHUNK_SIZE) bounds.push([s, Math.min(s + CHUNK_SIZE, size)]);
     const missing = new Set();
@@ -187,23 +217,18 @@ async function chunkedUpload(file, onProgress, concurrency = UPLOAD_CONCURRENCY)
     };
     const worker = async () => {
       for (;;) {
-        let idx;
         while (next < bounds.length && !missing.has(next)) next++;
         if (next >= bounds.length) return;
-        idx = next++;
+        const idx = next++;
         const [s, e] = bounds[idx];
-        const len = e - s;
         inFlight.set(idx, { loaded: 0 });
         let attempts = 0;
         for (;;) {
           attempts++;
           try {
             await uploadChunk(`/api/uploads/${uploadId}/chunk?offset=${s}`, file.slice(s, e),
-              (loaded) => { const inf = inFlight.get(idx); if (inf) inf.loaded = loaded; tick(); });
-            inFlight.delete(idx);
-            completedBytes += len;
-            tick();
-            break;
+              loaded => { const inf = inFlight.get(idx); if (inf) inf.loaded = loaded; tick(); });
+            inFlight.delete(idx); completedBytes += e - s; tick(); break;
           } catch (err) {
             if (attempts >= 5) throw err;
             await sleep(1000 * attempts);
@@ -211,92 +236,120 @@ async function chunkedUpload(file, onProgress, concurrency = UPLOAD_CONCURRENCY)
         }
       }
     };
-    const n = Math.min(concurrency, missing.size);
-    await Promise.all(Array.from({ length: n }, () => worker()));
+    await Promise.all(Array.from({ length: Math.min(concurrency, missing.size) }, () => worker()));
   }
   const st = await API.get(`/api/uploads/${uploadId}`);
-  if (st.received < size) {
-    throw { detail: 'upload did not complete after retries — submit again to resume' };
-  }
+  if (st.received < size) throw { detail: 'upload did not complete after retries — submit again to resume' };
   return uploadId;
 }
 
-// Video import — params from the advanced settings form (ceilings are % in the UI, 0..1 in the API)
 function videoParams() {
   const num = (id, fallback) => {
     const v = parseFloat(document.getElementById(id).value);
     return Number.isFinite(v) ? v : fallback;
   };
-  const mode = document.querySelector('input[name="sampleMode"]:checked')?.value || 'motion';
+  const mode = document.querySelector('input[name="sampleMode"]:checked')?.value || 'fixed';
+  const common = {
+    max_frames: Math.round(num('maxFrames', 5000)),
+    jpeg_quality: Math.round(num('jpegQuality', 90)),
+  };
   if (mode === 'auto') {
     return {
-      max_frames: Math.round(num('maxFrames', 5000)),
-      jpeg_quality: Math.round(num('jpegQuality', 90)),
+      ...common,
       auto: {
         conf: num('autoConf', 0.2),
         dilate_s: num('autoDilate', 3),
         sample_fps: num('autoFps', 10),
-        max_frames: Math.round(num('maxFrames', 5000)),
-        jpeg_quality: Math.round(num('jpegQuality', 90)),
+        ...common,
       },
     };
   }
-  return {
-    tiers: [
-      [num('tierCeil0', 0.5) / 100, num('tierInt0', 10)],
-      [num('tierCeil1', 2) / 100, num('tierInt1', 5)],
-      [num('tierCeil2', 8) / 100, num('tierInt2', 1)],
-      [null, num('tierInt3', 0.2)],
-    ],
-    min_interval: num('minInterval', 0.1),
-    max_interval: num('maxInterval', 30),
-    max_frames: Math.round(num('maxFrames', 5000)),
-    jpeg_quality: Math.round(num('jpegQuality', 90)),
-  };
+  return { ...common, interval: num('sampleInterval', 0.2) };
 }
 
 async function loadVideoJobs() {
   try {
-    const jobs = await API.get(`/api/projects/${projectId}/videos`);
-    videoJobs = jobs;
-    renderVideoJobs();
-    const active = jobs.some(j => j.status === 'pending' || j.status === 'running' || j.cancel_requested);
-    if (active && !videoPollTimer) {
-      videoPollTimer = setInterval(loadVideoJobs, 1500);
-    } else if (!active && videoPollTimer) {
-      clearInterval(videoPollTimer);
-      videoPollTimer = null;
+    videoJobs = await API.get(`/api/projects/${projectId}/videos`);
+    for (const [key, item] of uploadItems) {
+      const job = videoJobs.find(j => j.id === item.jobId);
+      if (job && ['done', 'failed', 'cancelled'].includes(job.status)) uploadItems.delete(key);
     }
+    renderVideoLists();
+    const active = videoJobs.some(j => j.status === 'pending' || j.status === 'running' || j.cancel_requested);
+    if (active && !videoPollTimer) videoPollTimer = setInterval(loadVideoJobs, 1500);
+    else if (!active && videoPollTimer) { clearInterval(videoPollTimer); videoPollTimer = null; }
   } catch {}
 }
 
-function renderVideoJobs() {
-  const el = document.getElementById('videoJobs');
-  el.innerHTML = (videoJobs || []).map(j => {
-    const running = j.status === 'pending' || j.status === 'running';
-    const knownTotal = (j.total_frames || 0) > 0;
-    const pct = knownTotal ? Math.min(100, Math.round((j.progress || 0) * 100)) : 100;
-    const decoded = (j.decoded_frames || 0).toLocaleString();
-    const extracted = (j.extracted_frames || 0).toLocaleString();
-    const stats = knownTotal
-      ? `${decoded} / ${j.total_frames.toLocaleString()} frames decoded · ${extracted} extracted`
-      : `${decoded} frames decoded · ${extracted} extracted`;
-    const indeterminate = running && !knownTotal;
-    const cancelBtn = running && !j.cancel_requested
-      ? `<button class="btn btn-ghost-dark btn-sm" onclick="cancelVideoJob(${j.id})">Cancel</button>` : '';
-    const cancelling = running && j.cancel_requested
-      ? `<span class="text-mute" style="font-size:12px">cancelling…</span>` : '';
-    return `
-      <div class="video-job">
-        <div class="row-between">
-          <span style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(j.filename)}</span>
-          <span class="row" style="gap:12px">${cancelling}${cancelBtn}<span class="micro-cap">${esc(j.status)}</span></span>
-        </div>
-        <div class="progress${indeterminate ? ' indeterminate' : ''}" style="margin-top:8px;"><div class="progress-fill" style="width:${pct}%"></div></div>
-        <p class="text-mute" style="font-size:12px;margin-top:4px;">${stats}</p>
-        ${j.status === 'failed' && j.error ? `<p class="error">${esc(j.error)}</p>` : ''}
-      </div>`;
+function renderVideoLists() {
+  const activeJobs = videoJobs.filter(j => j.status === 'pending' || j.status === 'running' || j.cancel_requested);
+  const mapped = new Set(activeJobs.map(j => j.id));
+  const pendingUploads = [...uploadItems.values()].filter(item => !item.jobId || !mapped.has(item.jobId));
+  const cards = pendingUploads.map(renderUploadCard).concat(activeJobs.map(renderJobCard));
+  document.getElementById('videoJobs').innerHTML = cards.join('');
+  document.getElementById('videoQueueCount').textContent = cards.length ? `${cards.length} active` : '';
+
+  const history = videoJobs.filter(j => ['done', 'failed', 'cancelled'].includes(j.status));
+  const section = document.getElementById('videoHistorySection');
+  section.classList.toggle('hidden', !history.length);
+  document.getElementById('videoHistoryToggle').textContent =
+    document.getElementById('videoHistory').classList.contains('hidden')
+      ? `View completed videos (${history.length})` : 'Hide completed videos';
+  if (!document.getElementById('videoHistory').classList.contains('hidden')) renderVideoHistory();
+}
+
+function renderUploadCard(item) {
+  const pct = Math.round(Math.max(0, Math.min(1, item.progress || 0)) * 100);
+  const failed = item.status === 'failed';
+  return `<article class="video-card upload-card ${failed ? 'is-failed' : ''}">
+    <div class="video-card-head"><strong title="${esc(item.file.name)}">${esc(item.file.name)}</strong><span class="micro-cap">${esc(item.status)}</span></div>
+    <div class="progress"><div class="progress-fill" style="width:${pct}%"></div></div>
+    <p class="text-mute video-card-meta">${esc(item.detail || '')}</p>
+    ${failed ? `<p class="error">${esc(item.error || 'Upload failed')}</p>` : ''}
+  </article>`;
+}
+
+function renderJobCard(j) {
+  const knownTotal = (j.total_frames || 0) > 0;
+  const pct = knownTotal ? Math.min(100, Math.round((j.progress || 0) * 100)) : (j.status === 'running' ? 100 : 0);
+  const indeterminate = j.status === 'running' && !knownTotal;
+  const decoded = (j.decoded_frames || 0).toLocaleString();
+  const extracted = (j.extracted_frames || 0).toLocaleString();
+  const stats = knownTotal ? `${decoded} / ${j.total_frames.toLocaleString()} frames decoded · ${extracted} extracted` : `${decoded} frames decoded · ${extracted} extracted`;
+  const cancelBtn = (j.status === 'pending' || j.status === 'running') && !j.cancel_requested
+    ? `<button class="btn btn-ghost-dark btn-sm" onclick="cancelVideoJob(${j.id})">Cancel</button>` : '';
+  const cancelling = j.cancel_requested ? '<span class="text-mute" style="font-size:12px">cancelling...</span>' : '';
+  return `<article class="video-card">
+    <div class="video-card-head"><strong title="${esc(j.filename)}">${esc(j.filename)}</strong><span class="row" style="gap:8px">${cancelling}${cancelBtn}<span class="micro-cap">${esc(j.status)}</span></span></div>
+    <div class="progress${indeterminate ? ' indeterminate' : ''}"><div class="progress-fill" style="width:${pct}%"></div></div>
+    <p class="text-mute video-card-meta">${stats}</p>
+  </article>`;
+}
+
+function renderVideoHistory() {
+  const history = videoJobs.filter(j => ['done', 'failed', 'cancelled'].includes(j.status));
+  const el = document.getElementById('videoHistory');
+  el.innerHTML = history.map(j => {
+    const extra = j.status === 'done' ? `${(j.extracted_frames || 0).toLocaleString()} frames extracted` : (j.error || j.status);
+    return `<button type="button" class="video-card video-history-card" data-job-id="${j.id}">
+      <span class="video-card-head"><strong title="${esc(j.filename)}">${esc(j.filename)}</strong><span class="micro-cap">${esc(j.status)}</span></span>
+      <span class="text-mute video-card-meta">${esc(extra)}</span>
+    </button>`;
   }).join('');
+  el.querySelectorAll('.video-history-card').forEach(card => {
+    card.onclick = () => showVideoDetails(videoJobs.find(j => j.id === parseInt(card.dataset.jobId)));
+  });
+}
+
+function showVideoDetails(job) {
+  if (!job) return;
+  const body = document.getElementById('videoDetailsBody');
+  const videoUrl = appPath(`/api/projects/${projectId}/videos/${job.id}/file`);
+  body.innerHTML = `<p><strong>${esc(job.filename)}</strong></p>
+    <p class="text-mute">Status: ${esc(job.status)}<br>Extracted frames: ${(job.extracted_frames || 0).toLocaleString()}<br>Decoded frames: ${(job.decoded_frames || 0).toLocaleString()}</p>
+    ${job.status === 'done' ? `<video controls preload="metadata" src="${videoUrl}" style="width:100%;max-height:420px;margin-top:12px"></video>` : ''}
+    ${job.error ? `<p class="error">${esc(job.error)}</p>` : ''}`;
+  document.getElementById('videoDetailsDialog').showModal();
 }
 
 async function cancelVideoJob(jobId) {

@@ -18,7 +18,7 @@
 - 每个抽取帧的检测结果（conf floor 0.05，top100 行）落盘缓存：
   `data/cache/det/<project_id>/<stored_name>.npz`（`app/detector.py`）
 - 推理服务不可达时 job 明确 failed（`inference service not reachable`），
-  不动现有 motion 采样路径
+  普通固定间隔抽帧路径保持独立
 
 **2. 笔刷（标注页，快捷键 B，半径滑条）**
 
@@ -28,12 +28,12 @@
 - 模型行语义（2026-09-04 样例图目视确认）：`cols0-7 = 4 角点 (x,y)`
   TL→BL→BR→TR 旋转四边形；`cols8-11` = 4 类 sigmoid；`cols12-20` = 9 路
   次级标签（待定名）
-- 笔刷当前吸附**外接轴对齐框**（Annotation 模型是 bbox）；类别 = 标注者
-  当前选中类；pose 项目吸附框后照常进入关键点放置；segment 项目不启用
+- 笔刷预览显示模型输出的 **4 个角点组成的旋转四边形**；保存时仍保留其
+  外接轴对齐框（Annotation 模型的兼容字段）。类别 = 标注者当前选中类；pose
+  项目吸附后照常进入关键点放置；segment 项目不启用
 - 缓存命中直接作答；普通上传图片首击按需单帧推理并落缓存
 
 **待办**：
-- 笔刷可升级为直接吸附 4 角点（segment 项目可落成 4 点多边形，pose 项目
-  可映射为 4 关键点实例）——Annotation 模型已支持 polygon，待确认项目
-  里"角点"的落法（polygon vs 4 keypoints）后再加
+- 笔刷吸附结果目前只把 4 角点用于预览，尚未将其直接落成 segment polygon
+  或 pose 的 4 个关键点实例；待确认项目里的“角点”落法后再持久化
 - 9 路次级标签与项目类别的映射配置

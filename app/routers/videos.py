@@ -1,4 +1,5 @@
 import json
+import mimetypes
 import os
 import queue
 import re
@@ -9,6 +10,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -149,8 +151,7 @@ def _sweep_stale_uploads() -> None:
 
 
 def _extract_params_dict(raw: dict) -> dict:
-    """Validate sampling params (motion tiers and/or auto-scan) and return the
-    storable form. `auto` is preserved verbatim (validated separately)."""
+    """Validate fixed-interval or auto-scan params and return their stored form."""
     from ..autolabel import AutoScanParams, ParamsError as AutoParamsError
     try:
         p = ExtractParams.from_dict(raw).to_dict()
@@ -439,6 +440,24 @@ def list_jobs(project_id: int, deps=Depends(require_member), session: Session = 
         select(VideoJob).where(VideoJob.project_id == project_id).order_by(VideoJob.id.desc())
     ).all()
     return [job_out(j) for j in jobs]
+
+
+@router.get("/{job_id}/file")
+def video_file(
+    project_id: int,
+    job_id: int,
+    deps=Depends(require_member),
+    session: Session = Depends(get_session),
+):
+    """Stream the original uploaded video for a completed job card."""
+    job = session.get(VideoJob, job_id)
+    if job is None or job.project_id != project_id:
+        raise HTTPException(404, "video not found")
+    path = VIDEO_DIR / str(project_id) / job.stored_name
+    if not path.is_file():
+        raise HTTPException(404, "video file not found")
+    media_type = mimetypes.guess_type(job.filename)[0] or "application/octet-stream"
+    return FileResponse(path, media_type=media_type)
 
 
 @router.post("/upload")

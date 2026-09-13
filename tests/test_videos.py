@@ -1,5 +1,4 @@
-"""Video import: motion-adaptive extraction logic + API job lifecycle."""
-import math
+"""Video import: fixed-interval extraction logic + API job lifecycle."""
 import time
 
 import cv2
@@ -11,16 +10,11 @@ from app.video import (
     ExtractParams,
     ParamsError,
     extract_frames,
-    interval_for,
 )
 
 
 def make_video(path, fps=30, seconds_static=4, seconds_moving=4, size=(320, 240)):
-    """Solid gray segment (static) followed by a fast-moving bright box.
-
-    The box changes ~12% of pixels per frame in the moving segment, putting it
-    in the densest default sampling tier; the static segment scores ~0.
-    """
+    """Solid gray segment followed by a moving bright box."""
     path = str(path)
     for fourcc, ext in ((cv2.VideoWriter_fourcc(*"mp4v"), ".mp4"),
                         (cv2.VideoWriter_fourcc(*"MJPG"), ".avi")):
@@ -48,29 +42,25 @@ def make_video(path, fps=30, seconds_static=4, seconds_moving=4, size=(320, 240)
 class TestParams:
     def test_defaults(self):
         p = ExtractParams.from_dict(None)
-        assert p.tiers[-1][0] == math.inf
-        assert p.min_interval < p.max_interval
+        assert p.interval == 0.2
 
     def test_from_dict(self):
         p = ExtractParams.from_dict({
-            "tiers": [[0.01, 5], [None, 1]],
+            "interval": 1.5,
             "max_frames": 10,
             "jpeg_quality": 80,
         })
-        assert p.tiers == [(0.01, 5.0), (math.inf, 1.0)]
+        assert p.interval == 1.5
         assert p.max_frames == 10
         assert p.jpeg_quality == 80
 
     def test_roundtrip(self):
         d = ExtractParams().to_dict()
-        assert ExtractParams.from_dict(d).tiers == ExtractParams().tiers
+        assert ExtractParams.from_dict(d).interval == ExtractParams().interval
 
     @pytest.mark.parametrize("bad", [
-        {"tiers": "nope"},
-        {"tiers": []},
-        {"tiers": [[0.01, 5]]},            # no catch-all (null ceiling) tier
-        {"tiers": [[0.01, 5], [None, 0]]},  # non-positive interval
-        {"min_interval": 5, "max_interval": 1},
+        {"interval": 0},
+        {"interval": 3601},
         {"max_frames": 0},
         {"jpeg_quality": 200},
     ])
@@ -79,32 +69,14 @@ class TestParams:
             ExtractParams.from_dict(bad)
 
 
-class TestIntervalFor:
-    def test_tier_mapping(self):
-        p = ExtractParams()
-        assert interval_for(0.0, p) == 10.0
-        assert interval_for(0.004, p) == 10.0
-        assert interval_for(0.01, p) == 5.0
-        assert interval_for(0.05, p) == 1.0
-        assert interval_for(0.5, p) == 0.2
-
-    def test_clamped_to_bounds(self):
-        p = ExtractParams(min_interval=2.0, max_interval=8.0)
-        assert interval_for(0.5, p) == 2.0
-        assert interval_for(0.0, p) == 8.0
-
-
 class TestExtractFrames:
-    def test_adaptive_density(self, tmp_path):
+    def test_fixed_interval(self, tmp_path):
         video, n_static, n_moving = make_video(tmp_path / "clip.mp4")
         out = tmp_path / "frames"
-        result = extract_frames(video, out, ExtractParams())
+        result = extract_frames(video, out, ExtractParams(interval=1.0))
         idxs = [f["frame_idx"] for f in result["frames"]]
-        static_part = [i for i in idxs if i < n_static]
-        moving_part = [i for i in idxs if i >= n_static]
         assert idxs[0] == 0  # first frame is always sampled
-        assert 1 <= len(static_part) <= 2  # ~10s interval over a 4s segment
-        assert len(moving_part) > 3 * len(static_part)
+        assert all(25 <= (b - a) <= 35 for a, b in zip(idxs, idxs[1:]))
         for f in result["frames"]:
             img = cv2.imread(str(out / f["stored_name"]))
             assert img is not None and img.shape[:2] == (f["height"], f["width"])
@@ -158,8 +130,7 @@ class TestParallelExtract:
         assert abs(len(r2["frames"]) - len(r1["frames"])) <= 2
         idx2 = [f["frame_idx"] for f in r2["frames"]]
         assert idx2 == sorted(idx2) and 0 in idx2
-        moving2 = [i for i in idx2 if i >= n_static]
-        assert len(moving2) > 3 * len([i for i in idx2 if i < n_static])
+        assert all(4 <= (b - a) <= 8 for a, b in zip(idx2, idx2[1:]))
         for f in r2["frames"]:
             img = cv2.imread(str(tmp_path / "w2" / f["stored_name"]))
             assert img is not None
@@ -232,7 +203,7 @@ class TestApi:
             r = client.post(
                 f"/api/projects/{project['id']}/videos/upload",
                 files={"files": ("clip.mp4", fh, "video/mp4")},
-                data={"params": '{"tiers": [[0.01, 5]]}'},
+                data={"params": '{"interval": 0}'},
             )
         assert r.status_code == 400
 

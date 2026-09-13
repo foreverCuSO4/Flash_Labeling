@@ -3,7 +3,7 @@
    English renders in Garamond (bundled EB Garamond), Chinese in 华文中宋 (system font). */
 @font-face {
   font-family: "EB Garamond";
-  src: url("/fonts/eb-garamond-latin.woff2") format("woff2");
+  src: url("../fonts/eb-garamond-latin.woff2") format("woff2");
   font-weight: 400 800;
   font-style: normal;
   font-display: swap;
@@ -394,11 +394,66 @@ textarea:focus { outline: 1px solid var(--on-primary); }
   margin: 8px 0;
 }
 
-/* Video import — jobs list & progress bar */
+/* Video import — independent upload/extraction cards */
 #videoAdvanced summary { cursor: pointer; }
-#videoJobs:not(:empty) { margin-top: 16px; }
-.video-job { margin-top: 12px; border-top: 1px solid var(--hairline-dark); padding-top: 12px; }
-.video-job:first-child { margin-top: 0; border-top: none; padding-top: 0; }
+.video-list-heading { margin-top: 24px; }
+.video-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.video-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--hairline-dark);
+  border-radius: var(--rounded-sm);
+  background: var(--canvas-night-soft);
+  color: var(--on-primary);
+}
+.video-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  margin-bottom: 10px;
+}
+.video-card-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 400;
+}
+.video-card-meta {
+  display: block;
+  margin-top: 7px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.upload-card.is-failed { border-color: #a44; }
+.video-history-card {
+  width: 100%;
+  appearance: none;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.video-history-card:hover { border-color: var(--on-primary); }
+#videoHistorySection { margin-top: 18px; }
+#videoDetailsDialog {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 20px;
+  border: 1px solid var(--hairline-dark);
+  border-radius: var(--rounded-sm);
+  background: var(--canvas-night);
+  color: var(--on-primary);
+}
+#videoDetailsDialog::backdrop { background: rgba(0, 0, 0, 0.78); }
+.video-details-body { margin-top: 18px; }
 .progress {
   height: 8px;
   background: var(--canvas-light);
