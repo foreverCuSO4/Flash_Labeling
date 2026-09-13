@@ -59,8 +59,9 @@ async function init() {
       return;
     }
     const sampling = videoParams();
+    const batch = { total: files.length, finished: 0, complete: false };
     const items = files.map(file => ({
-      key: fileKey(file), file, status: 'waiting', progress: 0, detail: 'Waiting to upload',
+      key: fileKey(file), file, batch, status: 'waiting', progress: 0, detail: 'Waiting to upload',
     }));
     items.forEach(item => uploadItems.set(item.key, item));
     renderVideoLists();
@@ -76,6 +77,7 @@ async function init() {
     try {
       const workers = Math.min(2, items.length);
       await Promise.all(Array.from({ length: workers }, worker));
+      batch.complete = true;
       const queued = items.filter(item => item.jobId).length;
       const failed = items.filter(item => item.status === 'failed').length;
       if (queued) {
@@ -112,11 +114,9 @@ function fileKey(file) {
 
 async function uploadVideo(item, sampling) {
   const file = item.file;
-  if (!file.size) {
-    item.status = 'failed'; item.error = `${file.name} is empty`; renderVideoLists(); return;
-  }
-  item.status = 'uploading'; item.detail = 'Starting resumable upload'; renderVideoLists();
   try {
+    if (!file.size) throw { detail: `${file.name} is empty` };
+    item.status = 'uploading'; item.detail = 'Starting resumable upload'; renderVideoLists();
     const uploadId = await chunkedUpload(file, (done, total) => {
       item.progress = total ? done / total : 0;
       item.detail = `Uploading ${Math.round(done / 1048576)} / ${Math.round(total / 1048576)} MB`;
@@ -133,8 +133,11 @@ async function uploadVideo(item, sampling) {
   } catch (err) {
     const msg = typeof err.detail === 'string' ? err.detail : 'Upload failed';
     item.status = 'failed'; item.error = `${msg} — submit again to resume.`;
+  } finally {
+    item.batch.finished += 1;
+    item.batch.complete = item.batch.finished >= item.batch.total;
+    renderVideoLists();
   }
-  renderVideoLists();
 }
 
 // --- Chunked resumable video upload ------------------------------------------
@@ -261,7 +264,9 @@ async function loadVideoJobs() {
     videoJobs = await API.get(`/api/projects/${projectId}/videos`);
     for (const [key, item] of uploadItems) {
       const job = videoJobs.find(j => j.id === item.jobId);
-      if (job && ['done', 'failed', 'cancelled'].includes(job.status)) uploadItems.delete(key);
+      if (job && item.batch?.complete && ['done', 'failed', 'cancelled'].includes(job.status)) {
+        uploadItems.delete(key);
+      }
     }
     renderVideoLists();
     const active = videoJobs.some(j => j.status === 'pending' || j.status === 'running' || j.cancel_requested);
