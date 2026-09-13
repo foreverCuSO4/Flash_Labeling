@@ -31,6 +31,21 @@
       </div>
     </div>
 
+    <!-- Section: inference model -->
+    <div class="panel mb-4">
+      <h2 class="micro-cap mb-2">Inference Model</h2>
+      <p class="text-mute mb-2" style="font-size:13px">The selected model is used for both Model auto-scan frame extraction and automatic annotation. The built-in model is selected by default. Uploaded ONNX models must use the same 640x384 image input and [N, 5040, 21] output format.</p>
+      <div class="col" style="max-width:640px">
+        <div><label>Active Model</label><select id="modelSelect"></select></div>
+        <button class="btn btn-ghost-dark btn-sm owner-only" id="saveModelBtn" style="align-self:flex-start">Save Model</button>
+        <form id="modelUploadForm" class="row owner-only" style="align-items:end">
+          <div style="flex:1"><label>Upload ONNX model</label><input type="file" id="modelFile" accept=".onnx" required></div>
+          <button type="submit" class="btn btn-ghost-dark btn-sm">Upload &amp; Use</button>
+        </form>
+        <p class="error hidden" id="modelErr"></p>
+      </div>
+    </div>
+
     <!-- Section: classes -->
     <div class="panel mb-4">
       <h2 class="micro-cap mb-2">Classes</h2>

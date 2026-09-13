@@ -23,11 +23,7 @@ spec:
         - name: inference
           image: flash-labeling-infer:local
           imagePullPolicy: Never
-          command: ["/bin/sh", "-c"]
-          args:
-            - >-
-              . /usr/local/Ascend/ascend-toolkit/set_env.sh &&
-              exec uvicorn inference.service:app --host 0.0.0.0 --port 8787
+          command: ["/app/scripts/infer_entrypoint.sh"]
           ports:
             - name: http
               containerPort: 8787
@@ -44,6 +40,8 @@ spec:
               value: /app/data/om_models/model_b8.om
             - name: INFER_MODEL_TAG
               value: gpu2_strict_best_snapshot
+            - name: INFER_MODEL_DIR
+              value: /app/data/models
           resources:
             requests:
               huawei.com/Ascend910: "1"
@@ -53,17 +51,24 @@ spec:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 10
             periodSeconds: 5
-            timeoutSeconds: 5
-            failureThreshold: 24
+            timeoutSeconds: 3
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 60
           livenessProbe:
             httpGet:
               path: /health
               port: http
             initialDelaySeconds: 30
             periodSeconds: 15
-            timeoutSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
           volumeMounts:
             - name: ascend
               mountPath: /usr/local/Ascend
@@ -71,6 +76,11 @@ spec:
             - name: om-models
               mountPath: /app/data/om_models
               readOnly: true
+            - name: model-files
+              mountPath: /app/data/models
+              readOnly: true
+            - name: inference-shm
+              mountPath: /dev/shm
       volumes:
         - name: ascend
           hostPath:
@@ -80,6 +90,14 @@ spec:
           hostPath:
             path: /data/users/zhujiayi/workspace/Flash_Labeling/data/om_models
             type: Directory
+        - name: model-files
+          hostPath:
+            path: /home/zhujiayi/data/storage/flash_labeling/data/models
+            type: DirectoryOrCreate
+        - name: inference-shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
 ---
 apiVersion: v1
 kind: Service

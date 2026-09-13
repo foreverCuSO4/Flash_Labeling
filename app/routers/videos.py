@@ -267,6 +267,7 @@ def complete_upload(upload_id: str, body: UploadCompleteIn,
         filename=meta["filename"],
         stored_name=stored,
         params=json.dumps(params_dict),
+        model_id=project.model_id,
         created_by=user.id,
     )
     session.add(job)
@@ -314,6 +315,7 @@ def job_out(job: VideoJob) -> dict:
         "total_frames": job.total_frames,
         "decoded_frames": job.decoded_frames,
         "extracted_frames": job.extracted_frames,
+        "model_id": job.model_id,
         "params": json.loads(job.params),
         "error": job.error,
         "created_at": job.created_at.isoformat(),
@@ -342,7 +344,8 @@ def _register_frames(session, job: VideoJob, result: dict, upload_dir: Path,
         ))
         rows = detections.get(f["frame_idx"])
         if rows is not None:
-            detector_mod.write_cache(job.project_id, f["stored_name"], rows)
+            detector_mod.write_cache(job.project_id, f["stored_name"], rows,
+                                     model_id=job.model_id)
 
 
 def run_job(job_id: int) -> None:
@@ -392,7 +395,8 @@ def run_job(job_id: int) -> None:
                     VIDEO_DIR / str(job.project_id) / job.stored_name,
                     tmp_dir,
                     AutoScanParams.from_dict(raw_params["auto"]),
-                    detector_mod.detect_frames,
+                    lambda frames: detector_mod.detect_frames(
+                        frames, model_id=job.model_id),
                     workers=_EXTRACT_WORKERS,
                     on_progress=on_progress,
                     should_cancel=should_cancel,
@@ -483,6 +487,7 @@ def upload_videos(
         raise HTTPException(400, f"invalid params: {e}")
 
     dest_dir = VIDEO_DIR / str(project_id)
+    project, _ = deps
     dest_dir.mkdir(parents=True, exist_ok=True)
     jobs = []
     try:
@@ -516,6 +521,7 @@ def upload_videos(
                 filename=file.filename or stored,
                 stored_name=stored,
                 params=json.dumps(params_dict),
+                model_id=project.model_id,
                 created_by=user.id,
             )
             session.add(job)

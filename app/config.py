@@ -7,7 +7,11 @@ VIDEO_DIR = DATA_DIR / "videos"
 UPLOAD_TMP_DIR = DATA_DIR / "uploads_tmp"
 AVATAR_DIR = DATA_DIR / "avatars"
 EXPORT_DIR = DATA_DIR / "exports"
+MODEL_DIR = DATA_DIR / "models"
 DB_PATH = DATA_DIR / "app.db"
 SECRET_KEY = __import__("os").environ.get("SECRET_KEY", "dev-secret-change-me-in-production")
 SESSION_COOKIE = "yololabel_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+DEFAULT_MODEL_TAG = __import__("os").environ.get(
+    "INFER_MODEL_TAG", "gpu2_strict_best_snapshot"
+)

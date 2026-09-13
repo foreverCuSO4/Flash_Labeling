@@ -38,6 +38,7 @@ class DeviceWorker:
         self.topk = topk
         self.models = {}
         self.ring = None
+        self.rt = None
 
     def setup(self):
         self.rt = AclRuntime(self.device_id).init()
@@ -49,13 +50,16 @@ class DeviceWorker:
         }
         self.ring = ShmRingClient(self.slot_names, self.max_batch)
 
-    def run(self, in_q, out_q):
-        self.setup()
-        print(f"[worker dev{self.device_id}] ready", flush=True)
+    def run(self, in_conn, out_conn):
         try:
+            self.setup()
+            print(f"[worker dev{self.device_id}] ready", flush=True)
             stopping = False
             while not stopping:
-                first = in_q.get()
+                try:
+                    first = in_conn.recv()
+                except (EOFError, OSError):
+                    break
                 if isinstance(first, str):
                     break
                 batch = [first]
@@ -65,24 +69,33 @@ class DeviceWorker:
                     left = deadline - time.perf_counter()
                     if left <= 0:
                         break
+                    if not in_conn.poll(left):
+                        break
                     try:
-                        item = in_q.get(timeout=left)
-                    except q_mod.Empty:
+                        item = in_conn.recv()
+                    except (EOFError, OSError):
+                        stopping = True
                         break
                     if isinstance(item, str):
                         stopping = True
                         break
                     batch.append(item)
                     n_frames += item[2]
-                self._execute(batch, out_q)
+                self._execute(batch, out_conn)
         finally:
             for m in self.models.values():
                 m.close()
-            self.rt.close()
+            if self.rt is not None:
+                self.rt.close()
             if self.ring:
                 self.ring.close()
+            try:
+                out_conn.send(None)
+            except (BrokenPipeError, EOFError, OSError):
+                pass
+            out_conn.close()
 
-    def _execute(self, batch, out_q):
+    def _execute(self, batch, out_conn):
         n = sum(it[2] for it in batch)
         size = 8 if (n <= 8 and 8 in self.models) else 16
         stage = self.stage[size]
@@ -107,17 +120,17 @@ class DeviceWorker:
                 for f in frame_outs:
                     rows = filter_rows(f, self.conf_thresh, self.topk)
                     parts.append(struct.pack("<H", len(rows)) + rows.tobytes())
-                out_q.put((sid, slot_idx, b"".join(parts)))
+                out_conn.send((sid, slot_idx, b"".join(parts)))
             else:
                 raw = np.ascontiguousarray(frame_outs)
                 view = np.frombuffer(
                     self.ring.buffer(slot_idx).data, dtype=np.uint8)
                 view[:raw.nbytes] = raw.view(np.uint8).ravel()
-                out_q.put((sid, slot_idx, None))
+                out_conn.send((sid, slot_idx, None))
 
 
 def worker_main(device_id, om_b16, om_b8, max_batch, window_ms,
-                slot_names, conf_thresh, topk, in_q, out_q):
+                slot_names, conf_thresh, topk, in_conn, out_conn):
     w = DeviceWorker(device_id, om_b16, om_b8, max_batch, window_ms,
                      slot_names, conf_thresh, topk)
-    w.run(in_q, out_q)
+    w.run(in_conn, out_conn)

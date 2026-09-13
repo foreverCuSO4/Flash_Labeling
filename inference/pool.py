@@ -1,4 +1,4 @@
-"""多卡推理池：帧数据过共享内存，控制/结果消息过队列。
+"""多卡推理池：帧数据过共享内存，控制/结果消息过 pipe。
 
 - submit 把帧拷贝进 shm slot，只把 (sid, slot, n, decode) 控制消息入队
 - worker 攒批执行后返回 (sid, slot, payload)
@@ -14,6 +14,7 @@ import os
 import struct
 import threading
 from concurrent.futures import Future
+from multiprocessing.connection import wait as wait_connections
 
 import numpy as np
 
@@ -29,29 +30,43 @@ class InferPool:
                  slots_per_device=4, workers_per_device=1):
         ctx = mp.get_context("spawn")
         self.max_batch = max_batch
-        self.in_q = ctx.Queue()
-        self.out_q = ctx.Queue()
         n_workers = len(devices) * workers_per_device
+        if n_workers <= 0:
+            raise ValueError("at least one inference worker is required")
         self.ring = ShmRing(f"flash_infer_{os.getpid()}",
                             n_workers * slots_per_device, max_batch)
         self._pending = {}
         self._pending_raw_k = {}
         self._pending_lock = threading.Lock()
+        self._dispatch_lock = threading.Lock()
         self._slot_sem = threading.BoundedSemaphore(len(self.ring.names))
         self._req_ids = itertools.count()
+        self._dispatch = itertools.cycle(range(n_workers))
         self._closed = False
         self.stats = {"submitted_frames": 0}
 
-        self.workers = [
-            ctx.Process(target=worker_main,
-                        args=(d, om_b16, om_b8, max_batch, window_ms,
-                              self.ring.names, conf_thresh, topk,
-                              self.in_q, self.out_q),
-                        daemon=True, name=f"acl-worker-dev{d}-{r}")
-            for d in devices for r in range(workers_per_device)
-        ]
-        for p in self.workers:
-            p.start()
+        # Queue/Lock relies on POSIX semaphores. A dedicated pipe per worker
+        # avoids that kernel resource entirely while preserving batching.
+        self._in_senders = []
+        self._out_receivers = []
+        self.workers = []
+        for d in devices:
+            for r in range(workers_per_device):
+                in_receiver, in_sender = ctx.Pipe(duplex=False)
+                out_receiver, out_sender = ctx.Pipe(duplex=False)
+                p = ctx.Process(
+                    target=worker_main,
+                    args=(d, om_b16, om_b8, max_batch, window_ms,
+                          self.ring.names, conf_thresh, topk,
+                          in_receiver, out_sender),
+                    daemon=True, name=f"acl-worker-dev{d}-{r}")
+                p.start()
+                # The child owns these ends after spawn.
+                in_receiver.close()
+                out_sender.close()
+                self._in_senders.append(in_sender)
+                self._out_receivers.append(out_receiver)
+                self.workers.append(p)
 
         self._collector = threading.Thread(target=self._collect,
                                            daemon=True, name="acl-collector")
@@ -60,26 +75,41 @@ class InferPool:
     # ---- 内部 ----
 
     def _collect(self):
-        while True:
+        active = list(self._out_receivers)
+        while active:
             try:
-                sid, slot, payload = self.out_q.get()
+                ready = wait_connections(active, timeout=1.0)
             except (EOFError, OSError):
                 return
-            with self._pending_lock:
-                fut = self._pending.pop(sid, None)
-                k = self._pending_raw_k.pop(sid, None)
-            if payload is None:
-                # raw 模式：先从 slot 拷贝，再回收
-                nbytes = k * int(np.prod(OUT_DIMS)) * 4
-                view = np.frombuffer(self.ring.buffer(slot).data,
-                                     dtype=np.uint8)[:nbytes]
-                result = view.view(np.float32).reshape(k, *OUT_DIMS).copy()
-            else:
-                result = payload
-            self.ring.release(slot)
-            self._slot_sem.release()
-            if fut is not None:
-                fut.set_result(result)
+            for conn in ready:
+                try:
+                    message = conn.recv()
+                except (EOFError, OSError):
+                    active.remove(conn)
+                    conn.close()
+                    continue
+                # Workers send a sentinel after releasing their model and
+                # shared-memory handles during graceful shutdown.
+                if message is None:
+                    active.remove(conn)
+                    conn.close()
+                    continue
+                sid, slot, payload = message
+                with self._pending_lock:
+                    fut = self._pending.pop(sid, None)
+                    k = self._pending_raw_k.pop(sid, None)
+                if payload is None:
+                    # raw 模式：先从 slot 拷贝，再回收
+                    nbytes = k * int(np.prod(OUT_DIMS)) * 4
+                    view = np.frombuffer(self.ring.buffer(slot).data,
+                                         dtype=np.uint8)[:nbytes]
+                    result = view.view(np.float32).reshape(k, *OUT_DIMS).copy()
+                else:
+                    result = payload
+                self.ring.release(slot)
+                self._slot_sem.release()
+                if fut is not None:
+                    fut.set_result(result)
 
     def _acquire_slot(self) -> int:
         self._slot_sem.acquire()
@@ -130,7 +160,9 @@ class InferPool:
                 self._pending[sid] = pf
                 if not decode:
                     self._pending_raw_k[sid] = k
-            self.in_q.put((sid, slot, k, decode))
+            with self._dispatch_lock:
+                worker_idx = next(self._dispatch)
+                self._in_senders[worker_idx].send((sid, slot, k, decode))
 
         self.stats["submitted_frames"] += n
         return top
@@ -154,18 +186,25 @@ class InferPool:
             "pending_requests": pending,
             "submitted_frames": self.stats["submitted_frames"],
             "workers_alive": sum(p.is_alive() for p in self.workers),
+            "workers_expected": len(self.workers),
         }
 
     def close(self):
         if self._closed:
             return
         self._closed = True
-        for _ in self.workers:
-            self.in_q.put(STOP)
+        for conn in self._in_senders:
+            try:
+                conn.send(STOP)
+            except (BrokenPipeError, EOFError, OSError):
+                pass
         for p in self.workers:
             p.join(timeout=5)
             if p.is_alive():
                 p.terminate()
+                p.join(timeout=2)
+        for conn in self._in_senders + self._out_receivers:
+            conn.close()
         self.ring.close()
 
     def __enter__(self):

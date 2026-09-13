@@ -21,7 +21,7 @@ async function init() {
   if (!isOwner) {
     document.getElementById('readonlyNotice').style.display = 'block';
     document.querySelectorAll('.owner-only').forEach(el => el.style.display = 'none');
-    document.querySelectorAll('input, textarea').forEach(el => el.disabled = true);
+    document.querySelectorAll('input, textarea, select').forEach(el => el.disabled = true);
   }
 
   document.getElementById('editName').value = project.name;
@@ -34,6 +34,7 @@ async function init() {
     document.getElementById('editSkeleton').value = project.skeleton.map(e => e.join('-')).join(', ');
   }
 
+  renderModels();
   renderClasses();
   bindEvents();
 }
@@ -58,6 +59,35 @@ function bindEvents() {
       await API.request('PATCH', `/api/projects/${projectId}`, { guidelines: document.getElementById('editGuidelines').value });
       flash();
     } catch (err) { showErr(errEl, err.detail || 'Failed'); }
+  };
+
+  document.getElementById('saveModelBtn').onclick = async () => {
+    const errEl = document.getElementById('modelErr');
+    hideErr(errEl);
+    const value = document.getElementById('modelSelect').value;
+    try {
+      await API.request('PATCH', `/api/projects/${projectId}/model`, {
+        model_id: value ? Number(value) : null,
+      });
+      await reloadProject();
+      flash();
+    } catch (err) { showErr(errEl, err.detail || 'Failed to select model'); }
+  };
+
+  document.getElementById('modelUploadForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById('modelErr');
+    hideErr(errEl);
+    const file = document.getElementById('modelFile').files[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      project = await API.post(`/api/projects/${projectId}/models`, fd, true);
+      document.getElementById('modelFile').value = '';
+      renderModels();
+      flash();
+    } catch (err) { showErr(errEl, err.detail || 'Model upload failed'); }
   };
 
   document.getElementById('editGuidelines').addEventListener('input', renderPreview);
@@ -142,7 +172,16 @@ function renderClasses() {
 
 async function reloadProject() {
   project = await API.get(`/api/projects/${projectId}`);
+  renderModels();
   renderClasses();
+}
+
+function renderModels() {
+  const select = document.getElementById('modelSelect');
+  if (!select || !project) return;
+  select.innerHTML = `<option value="">${esc(project.model?.builtin ? project.model.name : 'Built-in model')}</option>`
+    + (project.models || []).map(m => `<option value="${m.id}">${esc(m.name)} (${esc(m.filename)})</option>`).join('');
+  select.value = project.model?.id == null ? '' : String(project.model.id);
 }
 
 init();

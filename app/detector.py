@@ -23,11 +23,11 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from .config import DATA_DIR
+from .config import DATA_DIR, DEFAULT_MODEL_TAG
 
 INFER_URL = os.environ.get("INFER_URL", "http://127.0.0.1:8787")
 CACHE_DIR = DATA_DIR / "cache" / "det"
-MODEL_TAG = os.environ.get("INFER_MODEL_TAG", "gpu2_strict_best_snapshot")
+MODEL_TAG = DEFAULT_MODEL_TAG
 CONF_FLOOR = 0.05
 MODEL_W, MODEL_H = 640, 384
 _BATCH = 32
@@ -55,7 +55,11 @@ def _unpack_rows_blob(blob: bytes) -> list[np.ndarray]:
     return out
 
 
-def _http_detect(frames_u8: np.ndarray) -> list[np.ndarray]:
+def _model_tag(model_id: int | None) -> str:
+    return MODEL_TAG if model_id is None else f"project-model:{int(model_id)}"
+
+
+def _http_detect(frames_u8: np.ndarray, model_id: int | None = None) -> list[np.ndarray]:
     frames_u8 = np.ascontiguousarray(frames_u8, dtype=np.uint8)
     n = len(frames_u8)
     results: list[np.ndarray] = []
@@ -63,8 +67,9 @@ def _http_detect(frames_u8: np.ndarray) -> list[np.ndarray]:
         chunk = frames_u8[start:start + _BATCH]
         buf = io.BytesIO()
         np.savez(buf, frames=chunk)
+        query = "" if model_id is None else f"?model_id={int(model_id)}"
         req = urllib.request.Request(
-            f"{INFER_URL}/infer", data=buf.getvalue(),
+            f"{INFER_URL}/infer{query}", data=buf.getvalue(),
             headers={"Content-Type": "application/octet-stream"})
         try:
             with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
@@ -107,8 +112,10 @@ DetectFn = Callable[[np.ndarray], list[np.ndarray]]
 _detect_impl: DetectFn = _http_detect
 
 
-def detect_frames(frames_u8: np.ndarray) -> list[np.ndarray]:
-    return _detect_impl(frames_u8)
+def detect_frames(frames_u8: np.ndarray, model_id: int | None = None) -> list[np.ndarray]:
+    if model_id is None:
+        return _detect_impl(frames_u8)
+    return _http_detect(frames_u8, model_id)
 
 
 def set_detector_for_tests(fn: Optional[DetectFn]) -> None:
@@ -124,24 +131,28 @@ def cache_path(project_id: int, stored_name: str) -> Path:
 
 
 def write_cache(project_id: int, stored_name: str,
-                rows: np.ndarray) -> Path:
+                rows: np.ndarray, model_id: int | None = None) -> Path:
     path = cache_path(project_id, stored_name)
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = np.asarray(rows, dtype=np.float32).reshape(-1, 21)
     tmp = path.with_suffix(".tmp")
     with open(tmp, "wb") as fh:
         np.savez(fh, rows=rows, conf_floor=np.float32(CONF_FLOOR),
-                 model=np.array(MODEL_TAG))
+                 model=np.array(_model_tag(model_id)))
     os.replace(tmp, path)
     return path
 
 
-def read_cache(project_id: int, stored_name: str) -> Optional[np.ndarray]:
+def read_cache(project_id: int, stored_name: str,
+               model_id: int | None = None) -> Optional[np.ndarray]:
     path = cache_path(project_id, stored_name)
     if not path.exists():
         return None
     try:
         with np.load(path) as z:
+            cached_model = str(z["model"].item()) if "model" in z else MODEL_TAG
+            if cached_model != _model_tag(model_id):
+                return None
             return np.asarray(z["rows"], dtype=np.float32).reshape(-1, 21)
     except Exception:
         return None

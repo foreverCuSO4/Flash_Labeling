@@ -8,6 +8,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "uploads_tmp").mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "avatars").mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "exports").mkdir(parents=True, exist_ok=True)
+(DATA_DIR / "models").mkdir(parents=True, exist_ok=True)
 
 engine = create_engine(
     f"sqlite:///{DB_PATH}",
@@ -35,6 +36,7 @@ _COLUMN_MIGRATIONS = {
         "guidelines": "TEXT DEFAULT ''",
         "keypoints": "TEXT DEFAULT '[]'",
         "skeleton": "TEXT DEFAULT '[]'",
+        "model_id": "INTEGER",
     },
     "projectclass": {
         "description": "TEXT DEFAULT ''",
@@ -48,6 +50,7 @@ _COLUMN_MIGRATIONS = {
     },
     "videojob": {
         "decoded_frames": "INTEGER DEFAULT 0",
+        "model_id": "INTEGER",
     },
 }
 

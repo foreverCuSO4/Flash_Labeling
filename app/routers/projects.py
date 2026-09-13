@@ -6,8 +6,9 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, func, select
 
+from ..config import DEFAULT_MODEL_TAG, MODEL_DIR
 from ..db import get_session
-from ..models import Annotation, Image, Project, ProjectClass, ProjectMember, User
+from ..models import Annotation, Image, Project, ProjectClass, ProjectMember, ProjectModel, User
 from ..security import current_user, get_membership, require_member, require_owner, require_viewer
 from .images import claim_expired
 
@@ -29,6 +30,10 @@ class ProjectPatch(BaseModel):
     guidelines: str | None = None
     keypoints: list[str] | None = None
     skeleton: list[list[int]] | None = None
+
+
+class ModelSelectIn(BaseModel):
+    model_id: int | None = None
 
 
 class ClassIn(BaseModel):
@@ -55,6 +60,11 @@ def project_out(session: Session, project: Project, membership: ProjectMember | 
     labeled_count = session.exec(
         select(func.count(Image.id)).where(Image.project_id == project.id, Image.status == "labeled")
     ).one()
+    models = session.exec(
+        select(ProjectModel).where(ProjectModel.project_id == project.id)
+        .order_by(ProjectModel.id)
+    ).all()
+    selected = next((m for m in models if m.id == project.model_id), None)
     return {
         "id": project.id,
         "name": project.name,
@@ -64,6 +74,15 @@ def project_out(session: Session, project: Project, membership: ProjectMember | 
         "guidelines": project.guidelines,
         "keypoints": json.loads(project.keypoints or "[]"),
         "skeleton": json.loads(project.skeleton or "[]"),
+        "model": {
+            "id": selected.id if selected else None,
+            "name": selected.name if selected else DEFAULT_MODEL_TAG,
+            "builtin": selected is None,
+        },
+        "models": [{
+            "id": m.id, "name": m.name, "filename": m.original_name,
+            "size_bytes": m.size_bytes,
+        } for m in models],
         "classes": [{"id": c.id, "name": c.name, "description": c.description, "ord": c.ord} for c in classes],
         "image_count": img_count,
         "labeled_count": labeled_count,
@@ -271,11 +290,96 @@ def update_project(project_id: int, body: ProjectPatch, deps=Depends(require_own
     return project_out(session, project, membership)
 
 
+@router.patch("/{project_id}/model")
+def update_project_model(project_id: int, body: ModelSelectIn,
+                         deps=Depends(require_owner), session: Session = Depends(get_session)):
+    project, membership = deps
+    if body.model_id is not None:
+        model = session.get(ProjectModel, body.model_id)
+        if model is None or model.project_id != project_id:
+            raise HTTPException(400, "model does not belong to this project")
+    project.model_id = body.model_id
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    return project_out(session, project, membership)
+
+
+_MAX_MODEL_BYTES = 2 * 1024 ** 3
+
+
+@router.post("/{project_id}/models")
+async def upload_project_model(project_id: int, file: UploadFile,
+                               deps=Depends(require_owner),
+                               user: User = Depends(current_user),
+                               session: Session = Depends(get_session)):
+    project, membership = deps
+    filename = Path(file.filename or "model.onnx").name
+    if Path(filename).suffix.lower() != ".onnx":
+        raise HTTPException(400, "only .onnx models are supported")
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    model = ProjectModel(
+        project_id=project_id,
+        name=Path(filename).stem[:120] or "uploaded-model",
+        original_name=filename,
+        stored_name="",
+        created_by=user.id,
+    )
+    session.add(model)
+    session.commit()
+    session.refresh(model)
+    stored_name = f"{model.id}.onnx"
+    dest = MODEL_DIR / stored_name
+    size = 0
+    try:
+        with open(dest, "wb") as fh:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > _MAX_MODEL_BYTES:
+                    raise HTTPException(413, "model file is too large")
+                fh.write(chunk)
+    except Exception:
+        dest.unlink(missing_ok=True)
+        session.delete(model)
+        session.commit()
+        raise
+    if size == 0:
+        dest.unlink(missing_ok=True)
+        session.delete(model)
+        session.commit()
+        raise HTTPException(400, "empty model file")
+    model.stored_name = stored_name
+    model.size_bytes = size
+    project.model_id = model.id
+    session.add(model)
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    return project_out(session, project, membership)
+
+
+@router.delete("/{project_id}/models/{model_id}")
+def delete_project_model(project_id: int, model_id: int,
+                         deps=Depends(require_owner), session: Session = Depends(get_session)):
+    project, membership = deps
+    model = session.get(ProjectModel, model_id)
+    if model is None or model.project_id != project_id:
+        raise HTTPException(404, "model not found")
+    if project.model_id == model_id:
+        raise HTTPException(409, "cannot delete the active model")
+    (MODEL_DIR / model.stored_name).unlink(missing_ok=True)
+    session.delete(model)
+    session.commit()
+    return project_out(session, project, membership)
+
+
 @router.delete("/{project_id}")
 def delete_project(project_id: int, deps=Depends(require_owner), session: Session = Depends(get_session)):
     project, _ = deps
-    for model in (ProjectClass, ProjectMember, Image):
+    for model in (ProjectClass, ProjectMember, ProjectModel, Image):
         for row in session.exec(select(model).where(model.project_id == project_id)).all():
+            if isinstance(row, ProjectModel):
+                (MODEL_DIR / row.stored_name).unlink(missing_ok=True)
             session.delete(row)
     session.delete(project)
     session.commit()

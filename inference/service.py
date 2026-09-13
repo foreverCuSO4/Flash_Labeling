@@ -22,6 +22,8 @@
 """
 import io
 import os
+import threading
+from pathlib import Path
 
 import anyio
 import numpy as np
@@ -29,10 +31,14 @@ from fastapi import FastAPI, File, Request, Response
 from fastapi.responses import JSONResponse
 
 from inference.pool import InferPool
+from inference.onnx_engine import OnnxModel, OnnxModelError
 from inference.postprocess import rows_to_dicts
 
 app = FastAPI(title="flash-infer")
 _pool: InferPool | None = None
+_onnx_models: dict[int, OnnxModel] = {}
+_onnx_lock = threading.Lock()
+_MODEL_DIR = Path(os.environ.get("INFER_MODEL_DIR", "/app/data/models"))
 
 
 def get_pool() -> InferPool:
@@ -50,6 +56,20 @@ def get_pool() -> InferPool:
     return _pool
 
 
+def get_onnx_model(model_id: int) -> OnnxModel:
+    if model_id <= 0:
+        raise OnnxModelError("invalid model id")
+    with _onnx_lock:
+        model = _onnx_models.get(model_id)
+        if model is None:
+            path = _MODEL_DIR / f"{model_id}.onnx"
+            if not path.is_file():
+                raise OnnxModelError(f"model {model_id} is not available")
+            model = OnnxModel(path)
+            _onnx_models[model_id] = model
+        return model
+
+
 @app.on_event("startup")
 def _startup():
     get_pool()
@@ -61,14 +81,22 @@ def _shutdown():
     if _pool is not None:
         _pool.close()
         _pool = None
+    with _onnx_lock:
+        _onnx_models.clear()
 
 
 @app.get("/health")
 def health():
     p = get_pool()
-    alive = p.stats_snapshot()["workers_alive"]
-    return {"status": "ok" if alive else "degraded",
-            "workers_alive": alive}
+    snapshot = p.stats_snapshot()
+    alive = snapshot["workers_alive"]
+    expected = snapshot["workers_expected"]
+    payload = {"status": "ok" if alive == expected else "degraded",
+               "workers_alive": alive,
+               "workers_expected": expected}
+    if alive != expected:
+        return JSONResponse(payload, status_code=503)
+    return payload
 
 
 @app.get("/stats")
@@ -78,21 +106,25 @@ def stats():
 
 @app.post("/infer")
 async def infer(request: Request, raw: int = 0,
-                conf: float = 0.05, topk: int = 100):
+                conf: float = 0.05, topk: int = 100, model_id: int = 0):
     blob = await request.body()
     return await anyio.to_thread.run_sync(_do_infer, blob, bool(raw),
-                                          conf, topk)
+                                          conf, topk, model_id)
 
 
-def _do_infer(blob: bytes, raw: bool, conf: float, topk: int):
+def _do_infer(blob: bytes, raw: bool, conf: float, topk: int, model_id: int):
     """线程池里执行的阻塞部分：解 npz + 池调用 + JSON。"""
     frames = np.load(io.BytesIO(blob))["frames"]
-    if raw:
-        out = get_pool().infer_raw(frames)
-        buf = io.BytesIO()
-        np.savez(buf, output0=out)
-        return Response(buf.getvalue(), media_type="application/octet-stream")
-    rows_list = get_pool().infer_rows(frames)
+    try:
+        engine = get_onnx_model(model_id) if model_id else get_pool()
+        if raw:
+            out = engine.infer_raw(frames)
+            buf = io.BytesIO()
+            np.savez(buf, output0=out)
+            return Response(buf.getvalue(), media_type="application/octet-stream")
+        rows_list = engine.infer_rows(frames)
+    except OnnxModelError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
     return JSONResponse({
         "detections": [rows_to_dicts(_refilter(rows, conf, topk))
                        for rows in rows_list]
@@ -110,11 +142,12 @@ def _refilter(rows: np.ndarray, conf: float, topk: int) -> np.ndarray:
 
 @app.post("/infer_jpeg")
 async def infer_jpeg(files: list[bytes] = File(...),
-                     conf: float = 0.05, topk: int = 100):
-    return await anyio.to_thread.run_sync(_do_infer_jpeg, files, conf, topk)
+                     conf: float = 0.05, topk: int = 100, model_id: int = 0):
+    return await anyio.to_thread.run_sync(_do_infer_jpeg, files, conf, topk,
+                                          model_id)
 
 
-def _do_infer_jpeg(files: list[bytes], conf: float, topk: int):
+def _do_infer_jpeg(files: list[bytes], conf: float, topk: int, model_id: int):
     try:
         import cv2
     except ImportError:
@@ -127,7 +160,11 @@ def _do_infer_jpeg(files: list[bytes], conf: float, topk: int):
             return JSONResponse({"error": "无法解码图片"}, status_code=400)
         img = cv2.resize(img, (640, 384))
         frames.append(img)
-    rows_list = get_pool().infer_rows(np.stack(frames))
+    try:
+        engine = get_onnx_model(model_id) if model_id else get_pool()
+        rows_list = engine.infer_rows(np.stack(frames))
+    except OnnxModelError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
     return JSONResponse({
         "detections": [rows_to_dicts(_refilter(rows, conf, topk))
                        for rows in rows_list]

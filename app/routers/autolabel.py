@@ -35,14 +35,14 @@ def brush(image_id: int, body: BrushIn,
     img = session.get(Image, image_id)
     if img is None:
         raise HTTPException(404, "image not found")
-    require_member(img.project_id, user, session)
+    project, _ = require_member(img.project_id, user, session)
     if img.claimed_by != user.id or claim_expired(img):
         raise HTTPException(403, "image not claimed by you")
 
-    rows = detector_mod.read_cache(img.project_id, img.stored_name)
+    rows = detector_mod.read_cache(img.project_id, img.stored_name, project.model_id)
     cached = rows is not None
     if rows is None:
-        rows = _detect_and_cache(img)
+        rows = _detect_and_cache(img, project.model_id)
 
     hit = brush_hit(rows, body.x, body.y, body.r, img.width, img.height)
     if hit is None:
@@ -58,7 +58,7 @@ def brush(image_id: int, body: BrushIn,
     }
 
 
-def _detect_and_cache(img: Image) -> np.ndarray:
+def _detect_and_cache(img: Image, model_id: int | None = None) -> np.ndarray:
     """On-demand single-frame detection for images without a cache
     (e.g. plain uploads, or jobs run before auto-scan existed)."""
     import cv2
@@ -72,8 +72,8 @@ def _detect_and_cache(img: Image) -> np.ndarray:
     if frame.shape[:2] != (384, 640):
         frame = cv2.resize(frame, (640, 384))
     try:
-        rows = detector_mod.detect_frames(frame[None])[0]
+        rows = detector_mod.detect_frames(frame[None], model_id=model_id)[0]
     except detector_mod.DetectorUnavailable as e:
         raise HTTPException(503, str(e)) from e
-    detector_mod.write_cache(img.project_id, img.stored_name, rows)
+    detector_mod.write_cache(img.project_id, img.stored_name, rows, model_id=model_id)
     return rows

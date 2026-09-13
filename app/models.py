@@ -25,6 +25,7 @@ class Project(SQLModel, table=True):
     guidelines: str = Field(default="")  # annotation guidelines, Markdown
     keypoints: str = Field(default="[]")  # JSON list of keypoint names (pose mode)
     skeleton: str = Field(default="[]")  # JSON list of [i, j] edges (pose mode)
+    model_id: Optional[int] = Field(default=None, foreign_key="projectmodel.id", index=True)
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -41,6 +42,17 @@ class ProjectMember(SQLModel, table=True):
     project_id: int = Field(foreign_key="project.id", index=True)
     user_id: int = Field(foreign_key="user.id", index=True)
     role: str = "annotator"  # owner | annotator
+
+
+class ProjectModel(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    name: str
+    original_name: str
+    stored_name: str
+    size_bytes: int = 0
+    created_by: int = Field(foreign_key="user.id")
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class Image(SQLModel, table=True):
@@ -71,6 +83,7 @@ class VideoJob(SQLModel, table=True):
     total_frames: int = 0  # container-reported count (0 = unknown until finished)
     decoded_frames: int = 0
     extracted_frames: int = 0
+    model_id: Optional[int] = Field(default=None, foreign_key="projectmodel.id", index=True)
     error: Optional[str] = None
     created_by: int = Field(foreign_key="user.id")
     created_at: datetime = Field(default_factory=utcnow)
