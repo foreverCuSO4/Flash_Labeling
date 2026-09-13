@@ -32,10 +32,12 @@ fi
 }
 
 echo "[rebuild] building $APP_IMAGE"
-docker build --no-cache --platform linux/arm64 -t "$APP_IMAGE" .
+# docker build --no-cache --platform linux/arm64 -t "$APP_IMAGE" .
+docker build --platform linux/arm64 -t "$APP_IMAGE" .
 
 echo "[rebuild] building $INFER_IMAGE"
-docker build --no-cache --platform linux/arm64 \
+# docker build --no-cache --platform linux/arm64 \
+docker build --platform linux/arm64 \
   -f Dockerfile.inference -t "$INFER_IMAGE" .
 
 for image in "$APP_IMAGE" "$INFER_IMAGE"; do
