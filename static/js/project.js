@@ -173,7 +173,7 @@ function isMine(img) { return img.claimed_by === currentUser.id && !img.claim_ex
 function isAvailable(img) { return img.status === 'unlabeled' && !isClaimed(img); }
 
 function visibleImages() {
-  if (currentTab === 'mine') return allImages.filter(i => isMine(i) && i.status === 'unlabeled');
+  if (currentTab === 'mine') return allImages.filter(isMine);
   if (currentFilter === 'unlabeled') return allImages.filter(i => i.status === 'unlabeled');
   return allImages;
 }

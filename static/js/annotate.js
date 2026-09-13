@@ -55,12 +55,18 @@ let brushCursor = null;   // canvas coords while the brush is on, for the circle
 let brushRadius = 60;     // display pixels (converted to image px by /scale)
 let saveQueue = Promise.resolve();
 const pendingOperations = new Set();
+let leavingPage = false;
 
 async function init() {
   if (!projectId || !imageId) { window.location.href = appPath('/projects.html'); return; }
   try { currentUser = await API.get('/api/auth/me'); } catch { window.location.href = appPath('/'); return; }
 
-  document.getElementById('backLink').href = appPath(`/project.html?id=${projectId}`);
+  const backLink = document.getElementById('backLink');
+  backLink.href = appPath(`/project.html?id=${projectId}`);
+  backLink.onclick = (e) => {
+    e.preventDefault();
+    leavePage(backLink.href);
+  };
   project = await API.get(`/api/projects/${projectId}`);
   document.title = `Annotate — ${project.name}`;
 
@@ -1042,6 +1048,24 @@ async function navigate(dir) {
     if (!next) return;
     window.location.href = appPath(`/annotate.html?project=${projectId}&image=${next.id}`);
   } catch {}
+}
+
+async function leavePage(url) {
+  if (leavingPage) return;
+  leavingPage = true;
+  try {
+    if (!readOnly) {
+      await flushPendingOperations();
+      const finishedPlacement = placing ? finishPlacingForNavigation() : false;
+      if (polyDraft) cancelDraft();
+      // Persist the complete current state even when the last action did not
+      // itself trigger an auto-save (for example, an empty-label review).
+      if (!finishedPlacement) autoSave();
+      await flushPendingOperations();
+    }
+  } finally {
+    window.location.href = url;
+  }
 }
 
 init();
