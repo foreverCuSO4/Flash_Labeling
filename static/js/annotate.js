@@ -39,6 +39,8 @@ const brushPanel = document.getElementById('brushPanel');
 const brushBtn = document.getElementById('brushBtn');
 const brushStatus = document.getElementById('brushStatus');
 const brushRadiusInput = document.getElementById('brushRadius');
+const shortcutBtn = document.getElementById('shortcutBtn');
+const shortcutCard = document.getElementById('shortcutCard');
 
 const isPose = () => project && project.mode === 'pose';
 const isSeg = () => project && project.mode === 'segment';
@@ -46,6 +48,8 @@ const isSeg = () => project && project.mode === 'segment';
 let brushOn = false;
 let brushCursor = null;   // canvas coords while the brush is on, for the circle preview
 let brushRadius = 60;     // display pixels (converted to image px by /scale)
+let saveQueue = Promise.resolve();
+const pendingOperations = new Set();
 
 async function init() {
   if (!projectId || !imageId) { window.location.href = appPath('/projects.html'); return; }
@@ -75,13 +79,29 @@ async function init() {
   brushPanel.classList.toggle('hidden', isSeg());
   brushBtn.onclick = () => setBrush(!brushOn);
   brushRadiusInput.oninput = () => { brushRadius = parseInt(brushRadiusInput.value) || 60; redraw(); };
+  shortcutBtn.onclick = () => setShortcutCard(shortcutCard.classList.contains('hidden'));
   canvas.addEventListener('mousedown', onMouseDown);
   canvas.addEventListener('mousemove', onMouseMove);
   canvas.addEventListener('mouseup', onMouseUp);
+  canvas.addEventListener('wheel', onCanvasWheel, { passive: false });
+  canvas.addEventListener('contextmenu', onContextMenu);
   canvas.addEventListener('dblclick', onDblClick);
-  canvas.addEventListener('mouseleave', () => { if (drawing) { drawing = false; redraw(); } draggingKp = null; draggingVert = null; draftCursor = null; brushCursor = null; if (polyDraft) redraw(); else redraw(); });
+  canvas.addEventListener('mouseleave', () => {
+    const draggedAnnotation = Boolean(draggingKp || draggingVert);
+    if (drawing) drawing = false;
+    draggingKp = null;
+    draggingVert = null;
+    draftCursor = null;
+    brushCursor = null;
+    redraw();
+    if (draggedAnnotation) autoSave();
+  });
   document.addEventListener('keydown', onKeyDown);
   window.addEventListener('resize', fitCanvas);
+
+  // Brush is the primary annotation interaction. Segment projects keep the
+  // polygon workflow because brush suggestions are not available there.
+  if (!isSeg()) setBrush(true);
 }
 
 function applyReadOnly() {
@@ -122,6 +142,49 @@ function setBrush(on) {
   redraw();
 }
 
+function setShortcutCard(open) {
+  shortcutCard.classList.toggle('hidden', !open);
+  shortcutBtn.setAttribute('aria-expanded', String(open));
+}
+
+function onCanvasWheel(e) {
+  if (!brushOn || readOnly || isSeg()) return;
+  e.preventDefault();
+  const min = Number(brushRadiusInput.min) || 15;
+  const max = Number(brushRadiusInput.max) || 200;
+  const step = Number(brushRadiusInput.step) || 5;
+  const direction = e.deltaY < 0 ? 1 : -1;
+  brushRadius = Math.min(max, Math.max(min, brushRadius + direction * step));
+  brushRadiusInput.value = String(brushRadius);
+  redraw();
+}
+
+function onContextMenu(e) {
+  // The canvas uses the secondary button as an erase gesture.
+  e.preventDefault();
+  if (readOnly) return;
+  const pos = getMousePos(e);
+  if (placing) { cancelPlacing(); return; }
+  if (polyDraft) { cancelDraft(); return; }
+
+  const hit = isSeg() ? hitTestPolygon(pos) : hitTestBox(pos);
+  if (hit >= 0) removeBoxAt(hit);
+}
+
+function trackOperation(promise) {
+  let tracked;
+  tracked = Promise.resolve(promise).finally(() => pendingOperations.delete(tracked));
+  pendingOperations.add(tracked);
+  return tracked;
+}
+
+async function flushPendingOperations() {
+  while (pendingOperations.size) {
+    await Promise.all([...pendingOperations]);
+  }
+  await saveQueue.catch(() => {});
+}
+
 async function doBrush(pos) {
   if (readOnly || isSeg()) return;
   const [nx, ny] = toNorm(pos.x, pos.y);
@@ -156,6 +219,7 @@ async function doBrush(pos) {
       renderKpPanel();
     }
     redraw();
+    if (!isPose()) autoSave();
   } catch (err) {
     const detail = typeof err.detail === 'string' ? err.detail : '';
     if (err.status === 503) {
@@ -430,6 +494,16 @@ function hitTestBox(pos) {
   return -1;
 }
 
+function removeBoxAt(index) {
+  if (index < 0 || index >= boxes.length) return;
+  boxes.splice(index, 1);
+  if (selectedBoxIdx === index) selectedBoxIdx = -1;
+  else if (selectedBoxIdx > index) selectedBoxIdx--;
+  updateBoxCount();
+  redraw();
+  autoSave();
+}
+
 function hitTestKeypoint(pos) {
   if (selectedBoxIdx < 0) return null;
   const kps = boxes[selectedBoxIdx].keypoints;
@@ -483,9 +557,10 @@ function hitTestVertex(pos) {
 
 function onMouseDown(e) {
   if (readOnly) return;
+  if (e.button === 2) return;
   const pos = getMousePos(e);
 
-  if (brushOn) { doBrush(pos); return; }
+  if (brushOn) { trackOperation(doBrush(pos)); return; }
 
   if (placing) { placeKeypoint(pos); return; }
 
@@ -557,8 +632,13 @@ function onMouseMove(e) {
 
 function onMouseUp(e) {
   if (readOnly) return;
-  if (draggingKp) { draggingKp = null; return; }
-  if (draggingVert) { draggingVert = null; return; }
+  if (e.button !== 0) {
+    drawing = false;
+    drawStart = drawCurrent = null;
+    return;
+  }
+  if (draggingKp) { draggingKp = null; autoSave(); return; }
+  if (draggingVert) { draggingVert = null; autoSave(); return; }
   if (!drawing) return;
   drawing = false;
   const pos = getMousePos(e);
@@ -595,6 +675,7 @@ function onMouseUp(e) {
     renderKpPanel();
   }
   redraw();
+  if (!isPose()) autoSave();
 }
 
 function kpsBBox(kps) {
@@ -637,6 +718,7 @@ function placeKeypoint(pos) {
     }
     placing = null;
     placingVis = 2;
+    autoSave();
   }
   renderKpPanel();
   redraw();
@@ -679,6 +761,7 @@ function closeDraft() {
   draftCursor = null;
   updateBoxCount();
   redraw();
+  autoSave();
 }
 
 function cancelDraft() {
@@ -703,6 +786,11 @@ function onDblClick(e) {
 
 function onKeyDown(e) {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    e.preventDefault();
+    navigate(e.key === 'ArrowLeft' ? -1 : 1);
+    return;
+  }
   if (readOnly) return;
   const n = parseInt(e.key);
   if (n >= 1 && n <= Math.min(project.classes.length, 8)) {
@@ -711,17 +799,14 @@ function onKeyDown(e) {
     return;
   }
   if ((e.key === 'b' || e.key === 'B') && !isSeg()) {
-    setBrush(!brushOn);
+    setBrush(false);
     return;
   }
   if (e.key === 'Delete' || e.key === 'Backspace') {
     if (placing) { cancelPlacing(); return; }
     if (polyDraft) { cancelDraft(); return; }
     if (selectedBoxIdx >= 0 && selectedBoxIdx < boxes.length) {
-      boxes.splice(selectedBoxIdx, 1);
-      selectedBoxIdx = -1;
-      updateBoxCount();
-      redraw();
+      removeBoxAt(selectedBoxIdx);
     }
     return;
   }
@@ -735,6 +820,7 @@ function onKeyDown(e) {
   if (e.key === 's' || e.key === 'S') { save(); return; }
   if (e.key === 'Enter') { if (polyDraft) { closeDraft(); return; } }
   if (e.key === 'Escape') {
+    if (!shortcutCard.classList.contains('hidden')) { setShortcutCard(false); return; }
     if (placing) { cancelPlacing(); return; }
     if (polyDraft) { cancelDraft(); return; }
     selectedBoxIdx = -1; drawing = false; redraw();
@@ -743,20 +829,39 @@ function onKeyDown(e) {
 
 function updateBoxCount() { boxCount.textContent = String(boxes.length); }
 
-async function save() {
+function enqueueSave(auto = false) {
+  // Annotation writes replace the full set, so serialize them to prevent a
+  // fast sequence of clicks/erasures from letting an older request win.
+  const job = saveQueue.catch(() => {}).then(() => persistAnnotations(auto));
+  saveQueue = job;
+  return job;
+}
+
+function autoSave() { return enqueueSave(true); }
+
+async function persistAnnotations(auto = false) {
   if (readOnly) return;
-  hideErr(errMsg); okMsg.classList.add('hidden');
-  if (placing) { showErr(errMsg, 'Finish or cancel the current keypoint placement first (Esc).'); return; }
-  if (polyDraft) { showErr(errMsg, 'Finish or cancel the current polygon first (Enter to close, Esc to cancel).'); return; }
+  if (!auto) { hideErr(errMsg); okMsg.classList.add('hidden'); }
+  if (placing) {
+    if (!auto) showErr(errMsg, 'Finish or cancel the current keypoint placement first (Esc).');
+    return;
+  }
+  if (polyDraft) {
+    if (!auto) showErr(errMsg, 'Finish or cancel the current polygon first (Enter to close, Esc to cancel).');
+    return;
+  }
   try {
     // Model corners are only a visual preview; the annotation API persists
     // the compatible bbox/keypoint/polygon fields.
     const payload = boxes.map(({ corners, ...box }) => box);
     await API.put(`/api/images/${imageId}/annotations`, payload);
-    okMsg.textContent = `Saved ${boxes.length} instance(s).`;
+    okMsg.textContent = auto ? 'Auto-saved.' : `Saved ${boxes.length} instance(s).`;
     okMsg.classList.remove('hidden');
+    if (auto) setTimeout(() => okMsg.classList.add('hidden'), 1200);
   } catch (err) { showErr(errMsg, err.detail || 'Save failed'); }
 }
+
+function save() { return enqueueSave(false); }
 
 async function clearAll() {
   if (readOnly) return;
@@ -769,6 +874,7 @@ async function clearAll() {
   updateBoxCount();
   redraw();
   try {
+    await flushPendingOperations();
     await API.del(`/api/images/${imageId}/annotations`);
     okMsg.textContent = 'Cleared.';
     okMsg.classList.remove('hidden');
@@ -777,6 +883,7 @@ async function clearAll() {
 
 async function releaseClaim() {
   try {
+    await flushPendingOperations();
     await API.post(`/api/projects/${projectId}/images/${imageId}/release`);
     window.location.href = appPath(`/project.html?id=${projectId}`);
   } catch (err) { showErr(errMsg, err.detail || 'Release failed'); }
@@ -784,11 +891,20 @@ async function releaseClaim() {
 
 async function navigate(dir) {
   try {
+    if (placing) {
+      showErr(errMsg, 'Finish or cancel the current keypoint placement first (Esc).');
+      return;
+    }
+    if (polyDraft) {
+      showErr(errMsg, 'Finish or cancel the current polygon first (Enter to close, Esc to cancel).');
+      return;
+    }
+    await flushPendingOperations();
     const images = await API.get(`/api/projects/${projectId}/images`);
     const idx = images.findIndex(i => i.id === imageId);
     const next = images[idx + dir];
     if (!next) return;
-  window.location.href = appPath(`/annotate.html?project=${projectId}&image=${next.id}`);
+    window.location.href = appPath(`/annotate.html?project=${projectId}&image=${next.id}`);
   } catch {}
 }
 

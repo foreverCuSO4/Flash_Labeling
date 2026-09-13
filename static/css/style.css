@@ -283,11 +283,27 @@ th {
   border: 1px solid var(--hairline-dark);
   border-radius: var(--rounded-sm);
   padding: 16px;
-  overflow-y: auto;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
+.annotate-class-section {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+.annotate-class-list {
+  min-height: 0;
+  flex: 1 1 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+}
+#kpPanel { min-height: 0; max-height: 32%; overflow-y: auto; }
+.annotate-controls { position: relative; flex-shrink: 0; }
 .annotate-canvas-wrap {
   flex: 1;
   display: flex;
@@ -309,6 +325,34 @@ th {
 .class-item:hover { background: rgba(255,255,255,0.05); }
 .class-item.active { border-color: var(--on-primary); }
 .class-swatch { width: 16px; height: 16px; border-radius: 2px; flex-shrink: 0; }
+.shortcut-card {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  z-index: 4;
+  max-height: 180px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--hairline-dark);
+  border-radius: var(--rounded-xs);
+  background: var(--canvas-night-soft);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.58);
+  font-size: 12px;
+}
+.shortcut-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.shortcut-row kbd {
+  min-width: 54px;
+  padding: 2px 4px;
+  border: 1px solid var(--hairline-dark);
+  border-radius: 3px;
+  color: var(--on-primary);
+  font: 11px var(--font-mono, monospace);
+  text-align: center;
+  white-space: nowrap;
+}
+.shortcut-row span { color: var(--on-primary-mute); }
 
 /* Class colors (deterministic palette for bbox classes) */
 .class-color-0 { background: #ff6b6b; }
