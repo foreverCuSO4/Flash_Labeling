@@ -72,14 +72,27 @@ async function init() {
       showErr(yamlErr, 'The selected YAML file is empty.');
       return;
     }
-    const fd = new FormData();
-    fd.append('file', file);
     const name = document.getElementById('yamlName').value.trim();
-    if (name) fd.append('name', name);
     let proj;
     try {
-      proj = await API.post('/api/projects/from-yaml', fd, true);
-    } catch (err) { showErr(yamlErr, err.detail || 'Failed'); return; }
+      let content;
+      try {
+        content = await file.text();
+      } catch (readErr) {
+        showErr(yamlErr, `无法读取所选文件“${file.name}”：${readErr.message || '浏览器无法读取文件'}。请把 YAML 下载到当前电脑后重新选择。`);
+        return;
+      }
+      if (!content.trim()) {
+        showErr(yamlErr, '所选 YAML 文件没有内容，请选择非空的 .yaml 或 .yml 文件。');
+        return;
+      }
+      proj = await API.post('/api/projects/from-yaml-text', {
+        filename: file.name || 'dataset.yaml', content, name,
+      });
+    } catch (err) {
+      showErr(yamlErr, `${err.detail || '创建项目失败'}（文件：${file.name || '未命名'}，${file.size} 字节）`);
+      return;
+    }
     document.getElementById('yamlFile').value = '';
     document.getElementById('yamlName').value = '';
     createPanel.classList.add('hidden');

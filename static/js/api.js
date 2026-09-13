@@ -28,11 +28,38 @@ const API = {
     } else if (body && formBody) {
       opts.body = body;
     }
-    const res = await fetch(appPath(url), opts);
+    let res;
+    try {
+      res = await fetch(appPath(url), opts);
+    } catch (cause) {
+      throw {
+        status: 0,
+        detail: `无法连接服务器（${cause.message || '网络请求失败'}）。请检查网络连接后重试。`,
+        cause,
+      };
+    }
     if (!res.ok) {
-      let detail = res.statusText;
-      try { const j = await res.json(); detail = j.detail || detail; } catch {}
-      throw { status: res.status, detail };
+      const status = res.status;
+      let detail = '';
+      let responseText = '';
+      try {
+        responseText = await res.text();
+        if (responseText) {
+          try { detail = JSON.parse(responseText).detail || ''; } catch {}
+        }
+      } catch {}
+      if (!detail) {
+        if (status === 400) {
+          detail = '请求被网关拒绝（HTTP 400），上传内容没有完整到达服务器。请重新选择本地 YAML 文件后再试。';
+        } else if (status === 502) {
+          detail = '网关无法连接标注服务（HTTP 502）。请刷新页面后重试；如果仍然失败，请重新选择本地 YAML 文件。';
+        } else if (status === 504) {
+          detail = '网关等待标注服务超时（HTTP 504）。请稍后重试。';
+        } else {
+          detail = `请求失败（HTTP ${status}${res.statusText ? `: ${res.statusText}` : ''}）。`;
+        }
+      }
+      throw { status, detail, responseText };
     }
     const ct = res.headers.get('content-type') || '';
     if (ct.includes('application/zip') || ct.includes('octet-stream')) return res;

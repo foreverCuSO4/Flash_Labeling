@@ -50,6 +50,15 @@ class MemberIn(BaseModel):
     email: str
 
 
+class YamlTextIn(BaseModel):
+    """YAML text sent by clients that cannot stream multipart file bodies."""
+
+    filename: str = "dataset.yaml"
+    content: str
+    name: str = ""
+    mode: str = ""
+
+
 def project_out(session: Session, project: Project, membership: ProjectMember | None) -> dict:
     classes = session.exec(
         select(ProjectClass).where(ProjectClass.project_id == project.id).order_by(ProjectClass.ord)
@@ -207,6 +216,34 @@ def _parse_yaml_bytes(raw: bytes) -> dict:
 _MAX_YAML_BYTES = 1 << 20  # 1 MiB is generous for a dataset.yaml
 
 
+def _create_project_from_yaml_raw(
+    raw: bytes,
+    filename: str,
+    *,
+    name: str,
+    mode: str,
+    user: User,
+    session: Session,
+) -> dict:
+    filename = filename or "dataset.yaml"
+    if Path(filename).suffix.lower() not in (".yaml", ".yml"):
+        raise HTTPException(400, f"not a YAML file: {filename}")
+    if not raw:
+        raise HTTPException(400, "empty YAML file; choose a non-empty .yaml or .yml file")
+    if len(raw) > _MAX_YAML_BYTES:
+        raise HTTPException(
+            413,
+            f"YAML file is too large ({len(raw)} bytes; limit is {_MAX_YAML_BYTES} bytes)",
+        )
+    data = _parse_yaml_bytes(raw)
+    return _create_from_yaml_data(
+        session, user, data,
+        fallback_name=Path(filename).stem,
+        name_override=name or None,
+        mode_override=mode or None,
+    )
+
+
 @router.post("/from-yaml")
 async def create_project_from_yaml(
     file: UploadFile,
@@ -216,20 +253,32 @@ async def create_project_from_yaml(
     session: Session = Depends(get_session),
 ):
     """Create a project skeleton from a dataset.yaml uploaded from the browser."""
-    filename = file.filename or "dataset.yaml"
-    if Path(filename).suffix.lower() not in (".yaml", ".yml"):
-        raise HTTPException(400, f"not a YAML file: {filename}")
     raw = await file.read(_MAX_YAML_BYTES + 1)
-    if not raw:
-        raise HTTPException(400, "empty file")
-    if len(raw) > _MAX_YAML_BYTES:
-        raise HTTPException(400, "YAML file too large")
-    data = _parse_yaml_bytes(raw)
-    return _create_from_yaml_data(
-        session, user, data,
-        fallback_name=Path(filename).stem,
-        name_override=name or None,
-        mode_override=mode or None,
+    return _create_project_from_yaml_raw(
+        raw, file.filename or "dataset.yaml", name=name, mode=mode,
+        user=user, session=session,
+    )
+
+
+@router.post("/from-yaml-text")
+def create_project_from_yaml_text(
+    body: YamlTextIn,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Create a project from YAML text read by the browser.
+
+    This avoids multipart streaming problems seen with some browser/network
+    combinations. The original multipart endpoint remains available for API
+    clients and backwards compatibility.
+    """
+    try:
+        raw = body.content.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise HTTPException(400, f"YAML text is not valid UTF-8: {exc}")
+    return _create_project_from_yaml_raw(
+        raw, body.filename, name=body.name, mode=body.mode,
+        user=user, session=session,
     )
 
 

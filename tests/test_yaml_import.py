@@ -11,6 +11,18 @@ def _upload(client, content: bytes, filename="dataset.yaml", **form):
 
 
 class TestFromYaml:
+    def test_yaml_text_import(self, client, alice):
+        r = client.post(
+            "/api/projects/from-yaml-text",
+            json={
+                "filename": "dataset.yaml",
+                "content": "dataset_name: TextImport\nnames: [cat]\n",
+            },
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["name"] == "TextImport"
+        assert [c["name"] for c in r.json()["classes"]] == ["cat"]
+
     def test_detection_names_list(self, client, alice):
         r = _upload(client, b"""
 path: .

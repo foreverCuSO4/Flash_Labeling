@@ -70,11 +70,11 @@ async def no_cache_static(request, call_next):
     Only image file payloads get a long immutable cache — their URLs carry the
     per-upload uuid (`/api/images/<id>/file?v=<stored_name>`), so reused rowids
     can never collide with a stale cache entry. Everything else, including API
-    JSON like annotation lists, always revalidates.
+    JSON like annotation lists, is not stored in the browser cache.
     """
     response = await call_next(request)
     if fullmatch(r"/api/images/\d+/file", request.url.path):
         response.headers["Cache-Control"] = "max-age=31536000, immutable"
     else:
-        response.headers["Cache-Control"] = "no-cache"
+        response.headers["Cache-Control"] = "no-store, max-age=0"
     return response
