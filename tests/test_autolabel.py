@@ -104,7 +104,8 @@ class TestBrushHit:
     def test_class_index_uses_highest_score(self):
         r = rows((100, 100, 200, 200, 0.3))[0]
         r[8:12] = [0.1, 0.8, 0.2, 0.4]
-        assert row_class_index(r) == 1
+        r[12:21] = [0.1, 0.2, 0.9, 0.3, 0.4, 0.2, 0.1, 0.3, 0.2]
+        assert row_class_index(r) == 11  # prefix 1 × 9 + board type 2
 
     def test_hit_by_center(self):
         r = rows((100, 100, 200, 200, 0.9))   # center (150,150) in 640x384

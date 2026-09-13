@@ -134,8 +134,10 @@ def row_score(row: np.ndarray) -> float:
 
 
 def row_class_index(row: np.ndarray) -> int:
-    """Return the winning detector class index for one retained row."""
-    return int(np.argmax(row[8:12]))
+    """Map the 4-way prefix and 9-way board-type heads to one class."""
+    prefix = int(np.argmax(row[8:12]))
+    board_type = int(np.argmax(row[12:21]))
+    return prefix * 9 + board_type
 
 
 def row_box_norm(row: np.ndarray) -> tuple[float, float, float, float]:

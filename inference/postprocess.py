@@ -1,11 +1,11 @@
 """output0 [N, 5040, 21] 的解码。
 
-列语义（2026-09-04 用真实样例图目视验证过，见 docs/inference_backend.md）：
+列语义（2026-09-13 结合线上缓存和项目类别确认，见 docs/inference_backend.md）：
   cols 0-7    : 4 个角点 (x,y)，像素坐标（640×384 空间），顺序
                 左上 TL → 左下 BL → 右下 BR → 右上 TR（旋转四边形）
-  cols 8-11   : 4 类 sigmoid 分数
-  cols 12-20  : 9 路次级标签 sigmoid（one-hot 形态；每检出恰有一点亮，
-                推测为子类/属性分类头，语义待项目侧最终确认）
+  cols 8-11   : 4 路前缀类别 B/R/N/P 的 sigmoid 分数
+  cols 12-20  : 9 路板型类别 G/1/2/3/4/5/O/Bs/Bb 的 sigmoid 分数
+  最终类别    : argmax(cols 8-11) * 9 + argmax(cols 12-20)
 
 worker 内默认执行 filter_rows（阈值 + TopK），把每帧 423KB 原始输出压缩为
 k×84B 的行集合再跨进程传输；行 → 业务 dict 的转换在调用方进程完成。
@@ -49,10 +49,14 @@ def row_to_dict(row: np.ndarray) -> dict:
     """一行 (21,) → 业务 dict。"""
     cls = row[CLS]
     aux = row[AUX]
+    prefix_label = int(np.argmax(cls))
+    board_type_label = int(np.argmax(aux))
     return {
         "corners": corners_norm(row),
         "score": score_of(row),
-        "label": int(np.argmax(cls)),
+        "label": prefix_label * len(aux) + board_type_label,
+        "prefix_label": prefix_label,
+        "board_type_label": board_type_label,
         "cls_scores": [float(v) for v in cls],
         "aux_scores": [float(v) for v in aux],
     }
