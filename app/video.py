@@ -63,6 +63,108 @@ def _num(d: dict, key: str, lo: float, hi: float) -> float:
     return float(v)
 
 
+_DEDUP_IMAGE_SIZE = (64, 36)
+_DEDUP_IMAGE_DIFF = 0.025
+_DEDUP_MODEL_IOU = 0.98
+_DEDUP_MODEL_CENTER = 0.015
+_DEDUP_MODEL_SCORE = 0.20
+_DEDUP_MAX_GAP_S = 3.0
+
+
+def _dedup_model_rows(rows: Optional[np.ndarray], conf: float) -> list[tuple]:
+    """Return stable, significant detection signatures for duplicate checks."""
+    if rows is None or len(rows) == 0:
+        return []
+    scores = rows[:, 8:12].max(axis=1)
+    selected = rows[scores >= conf]
+    signatures = []
+    for row in selected:
+        points = row[:8].reshape(4, 2).astype(np.float64)
+        x1, y1 = points.min(axis=0)
+        x2, y2 = points.max(axis=0)
+        cx, cy = points.mean(axis=0)
+        signatures.append((
+            int(np.argmax(row[8:12])),
+            float(x1), float(y1), float(x2), float(y2),
+            float(cx), float(cy), float(row[8:12].max()),
+        ))
+    signatures.sort(key=lambda s: (s[5], s[6], s[0]))
+    return signatures
+
+
+def _boxes_similar(a: tuple, b: tuple) -> bool:
+    ax1, ay1, ax2, ay2 = a[1:5]
+    bx1, by1, bx2, by2 = b[1:5]
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    area_a = max(1.0, ax2 - ax1) * max(1.0, ay2 - ay1)
+    area_b = max(1.0, bx2 - bx1) * max(1.0, by2 - by1)
+    iou = inter / (area_a + area_b - inter)
+    diagonal = math.hypot(640.0, 384.0)
+    center_delta = math.hypot(a[5] - b[5], a[6] - b[6]) / diagonal
+    return iou >= _DEDUP_MODEL_IOU and center_delta <= _DEDUP_MODEL_CENTER
+
+
+def _models_similar(a: Optional[np.ndarray], b: Optional[np.ndarray], conf: float) -> bool:
+    left = _dedup_model_rows(a, conf)
+    right = _dedup_model_rows(b, conf)
+    if len(left) != len(right):
+        return False
+    return all(
+        x[0] == y[0]
+        and abs(x[7] - y[7]) <= _DEDUP_MODEL_SCORE
+        and _boxes_similar(x, y)
+        for x, y in zip(left, right)
+    )
+
+
+def _dedup_image_view(path: Path) -> Optional[np.ndarray]:
+    image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        return None
+    return cv2.resize(image, _DEDUP_IMAGE_SIZE, interpolation=cv2.INTER_AREA)
+
+
+def _images_similar(a: Optional[np.ndarray], b: Optional[np.ndarray]) -> bool:
+    if a is None or b is None or a.shape != b.shape:
+        return False
+    return float(cv2.absdiff(a, b).mean()) / 255.0 <= _DEDUP_IMAGE_DIFF
+
+
+def _deduplicate_auto_frames(
+    frames: list[dict],
+    detections: dict[int, np.ndarray],
+    out_dir: Path,
+    fps: float,
+    conf: float,
+) -> tuple[list[dict], dict[int, np.ndarray]]:
+    """Drop adjacent candidates only when model and appearance both match."""
+    kept: list[dict] = []
+    kept_detections: dict[int, np.ndarray] = {}
+    previous_image: Optional[np.ndarray] = None
+    previous_frame_idx: Optional[int] = None
+    for frame in sorted(frames, key=lambda f: f["frame_idx"]):
+        frame_idx = frame["frame_idx"]
+        image = _dedup_image_view(out_dir / frame["stored_name"])
+        previous_rows = (kept_detections.get(previous_frame_idx)
+                         if previous_frame_idx is not None else None)
+        close_in_time = (
+            previous_frame_idx is not None
+            and fps > 0
+            and (frame_idx - previous_frame_idx) / fps <= _DEDUP_MAX_GAP_S
+        )
+        if close_in_time and _models_similar(previous_rows, detections.get(frame_idx), conf):
+            if _images_similar(previous_image, image):
+                (out_dir / frame["stored_name"]).unlink(missing_ok=True)
+                continue
+        kept.append(frame)
+        kept_detections[frame_idx] = detections.get(frame_idx, np.empty((0, 21), np.float32))
+        previous_frame_idx = frame_idx
+        previous_image = image
+    return kept, kept_detections
+
+
 def _extract_segment(
     video_path: Path,
     out_dir: Path,
@@ -499,12 +601,14 @@ def extract_frames_auto(
         raise shared["errors"][0]
     if shared["cancelled"] or (should_cancel is not None and should_cancel()):
         raise Cancelled()
+    frames = sorted(shared["frames"], key=lambda f: f["frame_idx"])
+    frames, detections = _deduplicate_auto_frames(
+        frames, detections, out_dir, fps, params.conf,
+    )
     if on_progress is not None:
         with lock:
             on_progress(total_decoded_pass1 + shared["decoded"], total,
-                        len(shared["frames"]))
-
-    frames = sorted(shared["frames"], key=lambda f: f["frame_idx"])
+                        len(frames))
     return {
         "fps": fps,
         "total_frames": total if total else total_decoded_pass1,
