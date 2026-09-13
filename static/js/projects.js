@@ -68,6 +68,10 @@ async function init() {
     hideErr(yamlErr);
     const file = document.getElementById('yamlFile').files[0];
     if (!file) return;
+    if (!file.size) {
+      showErr(yamlErr, 'The selected YAML file is empty.');
+      return;
+    }
     const fd = new FormData();
     fd.append('file', file);
     const name = document.getElementById('yamlName').value.trim();

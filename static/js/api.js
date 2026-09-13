@@ -18,10 +18,14 @@ function appPath(path) {
 const API = {
   async request(method, url, body = null, isForm = false) {
     const opts = { method, credentials: 'same-origin' };
-    if (body && !isForm) {
+    // FormData callers should not need to rely on a separate boolean flag.
+    // This also keeps an older caller from serializing a multipart body as
+    // JSON when the page and shared API script came from different revisions.
+    const formBody = isForm || (typeof FormData !== 'undefined' && body instanceof FormData);
+    if (body && !formBody) {
       opts.headers = { 'Content-Type': 'application/json' };
       opts.body = JSON.stringify(body);
-    } else if (body && isForm) {
+    } else if (body && formBody) {
       opts.body = body;
     }
     const res = await fetch(appPath(url), opts);
