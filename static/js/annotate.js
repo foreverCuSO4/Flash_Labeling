@@ -1,7 +1,7 @@
 /* Annotation canvas: detection (bbox) + pose (bbox + keypoints) + segment (polygon) modes */
 const params = new URLSearchParams(window.location.search);
 const projectId = params.get('project');
-const imageId = parseInt(params.get('image'));
+let imageId = parseInt(params.get('image'));
 
 let project = null;
 let imageMeta = null;
@@ -56,6 +56,11 @@ let brushRadius = 60;     // display pixels (converted to image px by /scale)
 let saveQueue = Promise.resolve();
 const pendingOperations = new Set();
 let leavingPage = false;
+let switchingImage = false;
+let imageList = null;
+let imageLoadToken = 0;
+const imageAssets = new Map();
+const annotationCache = new Map();
 
 async function init() {
   if (!projectId || !imageId) { window.location.href = appPath('/projects.html'); return; }
@@ -76,8 +81,10 @@ async function init() {
     renderKpPanel();
   }
   if (isSeg()) document.getElementById('segHint').classList.remove('hidden');
-  await loadImageMeta();
-  await loadAnnotations();
+  imageList = await API.get(`/api/projects/${projectId}/images`);
+  const initialMeta = imageList.find(i => i.id === imageId);
+  if (!initialMeta) { window.location.href = appPath(`/project.html?id=${projectId}`); return; }
+  await activateImage(initialMeta);
   applyReadOnly();
 
   document.getElementById('saveBtn').onclick = save;
@@ -114,6 +121,7 @@ async function init() {
   // Brush is the primary annotation interaction. Segment projects keep the
   // polygon workflow because brush suggestions are not available there.
   if (!isSeg()) setBrush(true);
+  prefetchAdjacentImages();
 }
 
 function applyReadOnly() {
@@ -205,7 +213,7 @@ function setClassPicker(open) {
 }
 
 function onCanvasWheel(e) {
-  if (!brushOn || readOnly || isSeg()) return;
+  if (!brushOn || readOnly || switchingImage || isSeg()) return;
   e.preventDefault();
   const min = Number(brushRadiusInput.min) || 15;
   const max = Number(brushRadiusInput.max) || 200;
@@ -219,7 +227,7 @@ function onCanvasWheel(e) {
 function onContextMenu(e) {
   // The canvas uses the secondary button as an erase gesture.
   e.preventDefault();
-  if (readOnly) return;
+  if (readOnly || switchingImage) return;
   const pos = getMousePos(e);
   if (placing) { cancelPlacing(); return; }
   if (polyDraft) { cancelDraft(); return; }
@@ -368,34 +376,93 @@ function renderKpPanel() {
   }
 }
 
-async function loadImageMeta() {
-  const images = await API.get(`/api/projects/${projectId}/images`);
-  imageMeta = images.find(i => i.id === imageId);
-  if (!imageMeta) { window.location.href = appPath(`/project.html?id=${projectId}`); return; }
-  document.getElementById('imageName').textContent = imageMeta.filename;
-  updateNavInfo(images);
-  imgElement.onload = () => { imgLoaded = true; fitCanvas(); };
-  imgElement.src = appPath(imageMeta.url);
-}
-
 function updateNavInfo(images) {
   const idx = images.findIndex(i => i.id === imageId);
   document.getElementById('navInfo').textContent = `${idx + 1} / ${images.length}`;
 }
 
-async function loadAnnotations() {
-  try {
-    const anns = await API.get(`/api/images/${imageId}/annotations`);
-    boxes = anns.map(a => ({
+function boxesFromAnnotations(anns) {
+  return anns.map(a => ({
       class_id: a.class_id, x: a.x, y: a.y, w: a.w, h: a.h,
       corners: a.keypoints && a.keypoints.length === 4 && a.keypoints.every(kp => kp && kp.v > 0)
         ? keypointsFromModelCorners(a.keypoints.map(kp => [kp.x, kp.y])) : null,
-      keypoints: a.keypoints || null,
-      polygon: a.polygon || null,
-    }));
-    updateBoxCount();
-    redraw();
-  } catch {}
+      keypoints: a.keypoints ? a.keypoints.map(kp => ({ ...kp })) : null,
+      polygon: a.polygon ? a.polygon.map(point => [...point]) : null,
+  }));
+}
+
+function loadImageAsset(meta) {
+  const cached = imageAssets.get(meta.id);
+  if (cached) return cached.promise;
+  const image = new Image();
+  const promise = new Promise((resolve, reject) => {
+    image.onload = () => resolve(image);
+    image.onerror = () => {
+      imageAssets.delete(meta.id);
+      reject(new Error(`Unable to load image ${meta.id}`));
+    };
+  });
+  imageAssets.set(meta.id, { image, promise });
+  image.src = appPath(meta.url);
+  return promise;
+}
+
+async function loadAnnotationsFor(imageIdToLoad) {
+  if (annotationCache.has(imageIdToLoad)) {
+    return annotationCache.get(imageIdToLoad);
+  }
+  const anns = await API.get(`/api/images/${imageIdToLoad}/annotations`);
+  annotationCache.set(imageIdToLoad, anns);
+  return anns;
+}
+
+async function activateImage(meta) {
+  const token = ++imageLoadToken;
+  const [asset, anns] = await Promise.all([
+    loadImageAsset(meta),
+    loadAnnotationsFor(meta.id),
+  ]);
+  if (token !== imageLoadToken) return false;
+
+  imageId = meta.id;
+  imageMeta = meta;
+  imgElement = asset;
+  imgLoaded = true;
+  boxes = boxesFromAnnotations(anns);
+  selectedBoxIdx = -1;
+  drawing = false;
+  drawStart = drawCurrent = null;
+  placing = null;
+  polyDraft = null;
+  draftCursor = null;
+  draggingKp = null;
+  draggingVert = null;
+  brushCursor = null;
+  document.getElementById('imageName').textContent = imageMeta.filename;
+  updateNavInfo(imageList);
+  updateBoxCount();
+  if (isPose()) renderKpPanel();
+  applyReadOnly();
+  fitCanvas();
+  redraw();
+  return true;
+}
+
+function prefetchAdjacentImages() {
+  if (!imageList) return;
+  const idx = imageList.findIndex(i => i.id === imageId);
+  for (const neighbor of [imageList[idx - 1], imageList[idx + 1]]) {
+    if (!neighbor) continue;
+    loadImageAsset(neighbor).catch(() => {});
+    loadAnnotationsFor(neighbor.id).catch(() => {});
+  }
+}
+
+function setSwitchingImage(value) {
+  switchingImage = value;
+  document.getElementById('prevBtn').disabled = value;
+  document.getElementById('nextBtn').disabled = value;
+  canvas.setAttribute('aria-busy', String(value));
 }
 
 function fitCanvas() {
@@ -677,7 +744,7 @@ function hitTestVertex(pos) {
 }
 
 function onMouseDown(e) {
-  if (readOnly) return;
+  if (readOnly || switchingImage) return;
   if (e.button === 2) return;
   const pos = getMousePos(e);
 
@@ -722,7 +789,7 @@ function onMouseDown(e) {
 }
 
 function onMouseMove(e) {
-  if (readOnly) return;
+  if (readOnly || switchingImage) return;
   const pos = getMousePos(e);
   if (brushOn) {
     brushCursor = pos;
@@ -752,7 +819,7 @@ function onMouseMove(e) {
 }
 
 function onMouseUp(e) {
-  if (readOnly) return;
+  if (readOnly || switchingImage) return;
   if (e.button !== 0) {
     drawing = false;
     drawStart = drawCurrent = null;
@@ -947,7 +1014,7 @@ function onKeyDown(e) {
     navigate(e.key === 'ArrowLeft' ? -1 : 1);
     return;
   }
-  if (readOnly) return;
+  if (switchingImage || readOnly) return;
   const n = parseInt(e.key);
   if (n >= 1 && n <= Math.min(project.classes.length, 8)) {
     selectedClassIdx = n - 1;
@@ -1014,6 +1081,7 @@ async function persistAnnotations(auto = false) {
     if (isPose()) boxes.forEach(completePoseBoxKeypoints);
     const payload = boxes.map(({ corners, ...box }) => box);
     await API.put(`/api/images/${imageId}/annotations`, payload);
+    annotationCache.set(imageId, JSON.parse(JSON.stringify(payload)));
     okMsg.textContent = auto ? 'Auto-saved.' : `Saved ${boxes.length} instance(s).`;
     okMsg.classList.remove('hidden');
     if (auto) setTimeout(() => okMsg.classList.add('hidden'), 1200);
@@ -1035,6 +1103,7 @@ async function clearAll() {
   try {
     await flushPendingOperations();
     await API.del(`/api/images/${imageId}/annotations`);
+    annotationCache.set(imageId, []);
     okMsg.textContent = 'Cleared.';
     okMsg.classList.remove('hidden');
   } catch (err) { showErr(errMsg, err.detail || 'Clear failed'); }
@@ -1049,6 +1118,12 @@ async function releaseClaim() {
 }
 
 async function navigate(dir) {
+  if (switchingImage) return;
+  const images = imageList || await API.get(`/api/projects/${projectId}/images`);
+  const idx = images.findIndex(i => i.id === imageId);
+  const next = images[idx + dir];
+  if (!next) return;
+  setSwitchingImage(true);
   try {
     // Finish pending brush work before deciding how to leave an unfinished
     // keypoint draft. This avoids losing a brush-created pose annotation.
@@ -1056,12 +1131,14 @@ async function navigate(dir) {
     if (placing) finishPlacingForNavigation();
     if (polyDraft) cancelDraft();
     await flushPendingOperations();
-    const images = await API.get(`/api/projects/${projectId}/images`);
-    const idx = images.findIndex(i => i.id === imageId);
-    const next = images[idx + dir];
-    if (!next) return;
-    window.location.href = appPath(`/annotate.html?project=${projectId}&image=${next.id}`);
-  } catch {}
+    if (!await activateImage(next)) return;
+    history.replaceState(null, '', appPath(`/annotate.html?project=${projectId}&image=${next.id}`));
+    prefetchAdjacentImages();
+  } catch (err) {
+    showErr(errMsg, err.detail || 'Unable to load the next image');
+  } finally {
+    setSwitchingImage(false);
+  }
 }
 
 async function leavePage(url) {
