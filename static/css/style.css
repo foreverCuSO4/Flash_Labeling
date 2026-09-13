@@ -289,6 +289,22 @@ th {
   flex-direction: column;
   gap: 16px;
 }
+#annotationEditor { display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+#annotationEditor.hidden { display: none; }
+.annotate-readonly-summary { min-height: 0; }
+.annotate-summary-list { display: flex; flex-direction: column; gap: 8px; }
+.annotate-summary-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+.annotate-summary-row span { color: var(--on-primary-mute); }
+.annotate-summary-row strong { text-align: right; overflow-wrap: anywhere; }
+.annotate-summary-note { font-size: 12px; margin-top: 16px; }
+.annotate-controls.claim-only { margin-top: 0 !important; }
+.annotate-controls.claim-only > :not(#claimThisBtn) { display: none !important; }
 .annotate-class-section {
   min-height: 0;
   flex: 0 0 auto;

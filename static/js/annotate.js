@@ -31,6 +31,9 @@ const wrap = document.querySelector('.annotate-canvas-wrap');
 const classList = document.getElementById('classList');
 const classPickerBtn = document.getElementById('classPickerBtn');
 const classPickerCard = document.getElementById('classPickerCard');
+const annotationEditor = document.getElementById('annotationEditor');
+const readonlySummary = document.getElementById('readonlySummary');
+const annotateControls = document.getElementById('annotateControls');
 const boxCount = document.getElementById('boxCount');
 const errMsg = document.getElementById('errMsg');
 const okMsg = document.getElementById('okMsg');
@@ -109,17 +112,57 @@ async function init() {
 
 function applyReadOnly() {
   const isMember = project.role !== null;
-  readOnly = !isMember || !(imageMeta.claimed_by === currentUser.id && !imageMeta.claim_expired);
+  const hasActiveClaim = imageMeta.claimed_by != null && !imageMeta.claim_expired;
+  const isLabeled = imageMeta.status === 'labeled' || Number(imageMeta.annotation_count) > 0;
+  const canEdit = isMember && imageMeta.claimed_by === currentUser.id && !imageMeta.claim_expired;
+  const canClaim = isMember && !hasActiveClaim && !isLabeled;
+  readOnly = !canEdit;
+
+  annotationEditor.classList.toggle('hidden', !canEdit);
+  readonlySummary.classList.toggle('hidden', canEdit || canClaim);
+  annotateControls.classList.toggle('hidden', !canEdit && !canClaim);
+  annotateControls.classList.toggle('claim-only', !canEdit && canClaim);
+
   document.getElementById('saveBtn').classList.toggle('hidden', readOnly);
   document.getElementById('clearBtn').classList.toggle('hidden', readOnly);
   document.getElementById('releaseBtn').classList.toggle('hidden', readOnly);
-  document.getElementById('roBanner').classList.toggle('hidden', !readOnly);
-  if (readOnly) {
-    document.getElementById('roBanner').textContent = isMember
-      ? 'Read only — claim this image to annotate it.'
-      : 'Not a member — join the project from its page to annotate.';
-  }
-  document.getElementById('claimThisBtn').classList.toggle('hidden', !readOnly || !isMember);
+  document.getElementById('roBanner').classList.add('hidden');
+  document.getElementById('claimThisBtn').classList.toggle('hidden', !canClaim);
+  if (!canEdit && !canClaim) renderReadonlySummary(isLabeled, isMember, hasActiveClaim);
+}
+
+function formatAnnotationDate(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function renderReadonlySummary(isLabeled, isMember, hasActiveClaim) {
+  const classCounts = new Map();
+  boxes.forEach(box => {
+    const cls = project.classes.find(c => c.id === box.class_id);
+    const name = cls ? cls.name : `Class ${box.class_id}`;
+    classCounts.set(name, (classCounts.get(name) || 0) + 1);
+  });
+  const classes = [...classCounts.entries()].map(([name, count]) => `${esc(name)} × ${count}`).join(', ');
+  const claimInfo = hasActiveClaim
+    ? `<div class="annotate-summary-row"><span>Claimed by</span><strong>${esc(imageMeta.claimed_by_name || 'another user')}</strong></div>`
+    : '';
+  const accessInfo = !isMember
+    ? '<p class="text-mute annotate-summary-note">Join this project to claim and annotate images.</p>'
+    : (hasActiveClaim ? '<p class="text-mute annotate-summary-note">This image is currently being annotated by another user.</p>' : '');
+  readonlySummary.innerHTML = `
+    <p class="micro-cap mb-2">Annotation summary</p>
+    <div class="annotate-summary-list">
+      <div class="annotate-summary-row"><span>Status</span><strong>${isLabeled ? 'Labeled' : 'Unlabeled'}</strong></div>
+      <div class="annotate-summary-row"><span>Instances</span><strong>${Number(imageMeta.annotation_count) || boxes.length || 0}</strong></div>
+      ${classes ? `<div class="annotate-summary-row"><span>Classes</span><strong>${classes}</strong></div>` : ''}
+      ${isLabeled ? `<div class="annotate-summary-row"><span>Labeled by</span><strong>${esc(imageMeta.labeled_by_name || '—')}</strong></div>` : ''}
+      ${isLabeled ? `<div class="annotate-summary-row"><span>Labeled at</span><strong>${esc(formatAnnotationDate(imageMeta.labeled_at))}</strong></div>` : ''}
+      ${claimInfo}
+    </div>
+    ${accessInfo}
+  `;
 }
 
 async function claimThis() {

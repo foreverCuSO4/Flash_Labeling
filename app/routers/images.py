@@ -36,7 +36,9 @@ def claim_expired(img: Image) -> bool:
 
 def image_out(img: Image, session: Session) -> dict:
     claimer = session.get(User, img.claimed_by) if img.claimed_by else None
-    ann_count = len(session.exec(select(Annotation).where(Annotation.image_id == img.id)).all())
+    annotations = session.exec(select(Annotation).where(Annotation.image_id == img.id)).all()
+    labeler = session.get(User, img.labeled_by) if img.labeled_by else None
+    labeled_at = max((a.updated_at for a in annotations), default=None)
     return {
         "id": img.id,
         "filename": img.filename,
@@ -46,7 +48,10 @@ def image_out(img: Image, session: Session) -> dict:
         "claimed_by": img.claimed_by,
         "claimed_by_name": claimer.name if claimer else None,
         "claim_expired": claim_expired(img),
-        "annotation_count": ann_count,
+        "annotation_count": len(annotations),
+        "labeled_by": img.labeled_by,
+        "labeled_by_name": labeler.name if labeler else None,
+        "labeled_at": labeled_at.isoformat() if labeled_at else None,
         "created_at": img.created_at.isoformat(),
         # Content-addressed URL: stored_name is a uuid unique per upload, so the
         # immutable cache can never serve stale bytes when rowids get reused.
