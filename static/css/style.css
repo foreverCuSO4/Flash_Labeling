@@ -562,3 +562,122 @@ textarea:focus { outline: 1px solid var(--on-primary); }
 /* Unknown total: black/white pulse instead of a fake percentage */
 @keyframes progress-pulse { 0%, 100% { opacity: 0.2; } 50% { opacity: 1; } }
 .progress.indeterminate .progress-fill { animation: progress-pulse 1.4s ease-in-out infinite; }
+
+/* ASCII armor atmosphere — enabled on the sign-in and projects scenes */
+.ascii-scene {
+  position: relative;
+  isolation: isolate;
+  overflow-x: hidden;
+}
+.ascii-scene > *:not(.ascii-background) {
+  position: relative;
+  z-index: 1;
+}
+.ascii-background {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--canvas-night);
+}
+.ascii-background::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(0,0,0,.58), transparent 22%, transparent 78%, rgba(0,0,0,.64)),
+    linear-gradient(180deg, rgba(0,0,0,.24), transparent 30%, transparent 72%, rgba(0,0,0,.38));
+}
+.ascii-track {
+  position: absolute;
+  top: var(--track-top);
+  left: 0;
+  width: 100%;
+  overflow: hidden;
+  transform: translateY(-50%);
+}
+.ascii-track-inner {
+  display: flex;
+  width: max-content;
+  animation: armor-track var(--track-duration, 90s) linear var(--track-delay, 0s) infinite;
+  will-change: transform;
+}
+.ascii-track-group {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8ch;
+  padding-right: 8ch;
+}
+.ascii-slot {
+  flex: 0 0 54ch;
+  width: 54ch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.ascii-armor {
+  margin: 0;
+  color: rgba(221, 228, 235, .16);
+  font: 400 var(--ascii-size, 16px)/1.08 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: 0;
+  white-space: pre;
+}
+@keyframes armor-track {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(var(--track-distance), 0, 0); }
+}
+.ascii-scene .hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 440px);
+  gap: clamp(32px, 8vw, 140px);
+  align-content: center;
+  align-items: center;
+  max-width: 1240px;
+  margin: 0 auto;
+  width: 100%;
+  background: transparent;
+  text-align: left;
+}
+.ascii-scene .hero-brand {
+  grid-column: 1;
+  justify-self: start;
+}
+.ascii-scene .hero .auth-card {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  margin: 0;
+  background: rgba(10, 10, 10, .88);
+  box-shadow: 0 24px 72px rgba(0, 0, 0, .32);
+  backdrop-filter: blur(5px);
+}
+.ascii-scene nav {
+  background: rgba(0, 0, 0, .82);
+  backdrop-filter: blur(5px);
+}
+.ascii-scene .container .panel,
+.ascii-scene .container > .grid-auto > .panel {
+  background: rgba(10, 10, 10, .84);
+  backdrop-filter: blur(3px);
+}
+@media (max-width: 768px) {
+  .ascii-scene .hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    text-align: center;
+    padding: 40px 20px;
+  }
+  .ascii-scene .hero-brand { width: 100%; }
+  .ascii-scene .hero .auth-card {
+    width: min(440px, 100%);
+    margin-top: 40px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ascii-track-inner { animation-play-state: paused; }
+}
