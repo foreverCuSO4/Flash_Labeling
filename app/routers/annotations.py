@@ -141,8 +141,10 @@ def save_annotations(
             polygon=json.dumps(box.polygon) if box.polygon else None,
             created_by=user.id, updated_at=now,
         ))
-    img.status = "labeled" if boxes else "unlabeled"
-    img.labeled_by = user.id if boxes else None
+    # Saving, including an intentionally empty label set, marks the image as
+    # reviewed. Use the explicit DELETE endpoint to reset it to unlabeled.
+    img.status = "labeled"
+    img.labeled_by = user.id
     # The claim is kept after labeling so the annotator can keep fixing and
     # re-saving; it ends via manual release or the 24h lease expiring.
     session.add(img)

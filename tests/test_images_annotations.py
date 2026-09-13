@@ -194,14 +194,14 @@ class TestAnnotations:
         r = client.get(f"/api/projects/{project['id']}/images")
         assert r.json()[0]["status"] == "labeled"
 
-    def test_save_empty_resets_status(self, client, project):
+    def test_save_empty_marks_status_labeled(self, client, project):
         img = _upload(client, project["id"])
         _claim(client, project["id"], img["id"])
         client.put(f"/api/images/{img['id']}/annotations", json=BOXES)
         # The claim survives labeling, so re-saving within the lease works.
         client.put(f"/api/images/{img['id']}/annotations", json=[])
         r = client.get(f"/api/projects/{project['id']}/images")
-        assert r.json()[0]["status"] == "unlabeled"
+        assert r.json()[0]["status"] == "labeled"
 
     def test_save_invalid_class(self, client, project):
         img = _upload(client, project["id"])
