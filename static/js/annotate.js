@@ -193,6 +193,37 @@ async function flushPendingOperations() {
   await saveQueue.catch(() => {});
 }
 
+function keypointsFromModelCorners(corners) {
+  if (!isPose() || project.keypoints.length !== 4 || !Array.isArray(corners) || corners.length !== 4) return null;
+  const keypoints = [];
+  for (const point of corners) {
+    if (!Array.isArray(point) || point.length < 2 || !Number.isFinite(point[0]) || !Number.isFinite(point[1])) return null;
+    keypoints.push({
+      x: Math.min(1, Math.max(0, point[0])),
+      y: Math.min(1, Math.max(0, point[1])),
+      v: 2,
+    });
+  }
+  return keypoints;
+}
+
+function completePoseBoxKeypoints(box) {
+  if (!isPose()) return false;
+  const expected = project.keypoints.length;
+  const source = Array.isArray(box.keypoints) ? box.keypoints : [];
+  const current = source.slice(0, expected);
+  if (source.length === expected) return false;
+
+  // An untouched four-corner brush suggestion already contains the complete
+  // pose geometry. Preserve any manually placed points; only use the model
+  // corners when the keypoint list is still empty.
+  box.keypoints = current.length === 0 ? (keypointsFromModelCorners(box.corners) || current) : current;
+  while (box.keypoints.length < expected) {
+    box.keypoints.push({ x: 0, y: 0, v: 0 });
+  }
+  return true;
+}
+
 async function doBrush(pos) {
   if (readOnly || isSeg()) return;
   const [nx, ny] = toNorm(pos.x, pos.y);
@@ -209,25 +240,28 @@ async function doBrush(pos) {
     if (readOnly) return;
     const cls = project.classes[selectedClassIdx];
     if (!cls) return;
+    const modelKeypoints = keypointsFromModelCorners(s.corners);
     const box = {
       class_id: cls.id,
       x: s.x, y: s.y, w: s.w, h: s.h,
-      // Keep the model's oriented quadrilateral for the canvas preview. The
-      // bbox above remains the compatibility geometry sent to the annotation
-      // API, while corners are a client-side preview field.
+      // Keep the oriented quadrilateral for the canvas preview. Four-keypoint
+      // pose projects also persist these corners as visible keypoints.
       corners: Array.isArray(s.corners) ? s.corners : null,
-      keypoints: isPose() ? [] : null,
+      keypoints: isPose() ? (modelKeypoints || []) : null,
       polygon: null,
     };
     boxes.push(box);
     selectedBoxIdx = boxes.length - 1;
     updateBoxCount();
-    if (isPose()) {
+    if (isPose() && !modelKeypoints) {
       placing = { boxIdx: selectedBoxIdx, nextKp: 0 };
       renderKpPanel();
+      // Projects whose keypoint count does not match the four model corners
+      // still use manual placement, so hand canvas clicks back to that flow.
+      setBrush(false);
     }
     redraw();
-    if (!isPose()) autoSave();
+    if (!isPose() || modelKeypoints) autoSave();
   } catch (err) {
     const detail = typeof err.detail === 'string' ? err.detail : '';
     if (err.status === 503) {
@@ -289,7 +323,13 @@ function updateNavInfo(images) {
 async function loadAnnotations() {
   try {
     const anns = await API.get(`/api/images/${imageId}/annotations`);
-    boxes = anns.map(a => ({ class_id: a.class_id, x: a.x, y: a.y, w: a.w, h: a.h, corners: null, keypoints: a.keypoints || null, polygon: a.polygon || null }));
+    boxes = anns.map(a => ({
+      class_id: a.class_id, x: a.x, y: a.y, w: a.w, h: a.h,
+      corners: a.keypoints && a.keypoints.length === 4 && a.keypoints.every(kp => kp && kp.v > 0)
+        ? keypointsFromModelCorners(a.keypoints.map(kp => [kp.x, kp.y])) : null,
+      keypoints: a.keypoints || null,
+      polygon: a.polygon || null,
+    }));
     updateBoxCount();
     redraw();
   } catch {}
@@ -319,7 +359,7 @@ function classColor(classId) {
   return CLASS_COLORS[(idx >= 0 ? idx : 0) % CLASS_COLORS.length];
 }
 
-function drawModelCorners(corners, color, selected, label) {
+function drawQuadrilateral(corners, color, selected, label, showPoints = true) {
   if (!Array.isArray(corners) || corners.length < 3) return false;
   const pts = corners
     .filter(p => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]))
@@ -338,8 +378,9 @@ function drawModelCorners(corners, color, selected, label) {
   ctx.fillStyle = color;
   ctx.fillText(label || '?', pts[0][0] + 4, pts[0][1] - 6);
 
-  // Show the four predicted corner points and their model order on the
-  // preview. They are deliberately separate from project keypoints below.
+  if (!showPoints) return true;
+
+  // Show the four corner points and their order on the preview.
   pts.forEach(([px, py], pi) => {
     ctx.beginPath(); ctx.arc(px, py, selected ? 4 : 3, 0, Math.PI * 2);
     ctx.fillStyle = color; ctx.fill();
@@ -386,7 +427,11 @@ function redraw() {
       return;
     }
 
-    const hasCorners = drawModelCorners(b.corners, color, i === selectedBoxIdx, cls ? cls.name : '?');
+    const poseCorners = b.keypoints && b.keypoints.length === 4 && b.keypoints.every(kp => kp && kp.v > 0)
+      ? b.keypoints.map(kp => [kp.x, kp.y]) : null;
+    const hasCorners = drawQuadrilateral(
+      poseCorners || b.corners, color, i === selectedBoxIdx, cls ? cls.name : '?', !poseCorners,
+    );
     if (!hasCorners) {
       const [x, y, w, h] = boxToCanvas(b);
       ctx.strokeStyle = color;
@@ -763,9 +808,7 @@ function finishPlacingForNavigation() {
       return false;
     }
     const keypoints = placing.draft.slice();
-    while (keypoints.length < project.keypoints.length) {
-      keypoints.push({ x: 0, y: 0, v: 0 });
-    }
+    while (keypoints.length < project.keypoints.length) keypoints.push({ x: 0, y: 0, v: 0 });
     boxes.push({ class_id: cls.id, ...kpsBBox(keypoints), corners: null, keypoints, polygon: null });
     selectedBoxIdx = boxes.length - 1;
     updateBoxCount();
@@ -775,10 +818,7 @@ function finishPlacingForNavigation() {
       cancelPlacing();
       return false;
     }
-    if (!Array.isArray(box.keypoints)) box.keypoints = [];
-    while (box.keypoints.length < project.keypoints.length) {
-      box.keypoints.push({ x: 0, y: 0, v: 0 });
-    }
+    completePoseBoxKeypoints(box);
   }
   placing = null;
   placingVis = 2;
@@ -906,8 +946,9 @@ async function persistAnnotations(auto = false) {
     return;
   }
   try {
-    // Model corners are only a visual preview; the annotation API persists
-    // the compatible bbox/keypoint/polygon fields.
+    // Make every pose entry valid before sending the atomic replacement. This
+    // also covers multiple brush requests completing out of order.
+    if (isPose()) boxes.forEach(completePoseBoxKeypoints);
     const payload = boxes.map(({ corners, ...box }) => box);
     await API.put(`/api/images/${imageId}/annotations`, payload);
     okMsg.textContent = auto ? 'Auto-saved.' : `Saved ${boxes.length} instance(s).`;
