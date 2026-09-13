@@ -15,6 +15,7 @@ from app.autolabel import (
     frame_has_hit,
     row_box_norm,
     row_class_index,
+    row_class_name,
     row_corners_norm,
     sample_frames,
 )
@@ -101,11 +102,20 @@ class TestWindows:
 # Brush hit-test
 
 class TestBrushHit:
-    def test_class_index_uses_highest_score(self):
+    def test_class_mapping_uses_color_and_board_type_heads(self):
         r = rows((100, 100, 200, 200, 0.3))[0]
         r[8:12] = [0.1, 0.8, 0.2, 0.4]
         r[12:21] = [0.1, 0.2, 0.9, 0.3, 0.4, 0.2, 0.1, 0.3, 0.2]
         assert row_class_index(r) == 11  # prefix 1 × 9 + board type 2
+        assert row_class_name(r) == "R-2"
+
+    def test_blue_and_red_use_distinct_model_channels(self):
+        r = rows((100, 100, 200, 200, 0.3))[0]
+        r[12] = 0.9
+        r[8:12] = [0.9, 0.1, 0.0, 0.0]
+        assert row_class_name(r) == "B-G"
+        r[8:12] = [0.1, 0.9, 0.0, 0.0]
+        assert row_class_name(r) == "R-G"
 
     def test_hit_by_center(self):
         r = rows((100, 100, 200, 200, 0.9))   # center (150,150) in 640x384
@@ -198,6 +208,8 @@ class TestBrushAPI:
         assert s is not None
         assert s["score"] == pytest.approx(0.9)
         assert s["class_index"] == 0
+        assert s["class_name"] == "B-G"
+        assert s["class_id"] is None  # Demo has only car/person classes.
         assert s["x"] == pytest.approx(200 / 640)
         assert s["w"] == pytest.approx(200 / 640)
         assert np.allclose(s["corners"], [
@@ -214,6 +226,48 @@ class TestBrushAPI:
         r = client.post(f"/api/images/{image['id']}/brush",
                         json={"x": 0.95, "y": 0.95, "r": 30})
         assert r.json()["suggestion"] is None
+
+    def test_resolves_blue_and_red_by_semantic_class_name(self, client, alice):
+        # Deliberately reverse the project class order: detector channel 0 is
+        # still B and channel 1 is still R, independent of ProjectClass.ord.
+        project = client.post("/api/projects", json={
+            "name": "Armor", "classes": ["R-G", "B-G"],
+        }).json()
+        blue = make_row(50, 100, 150, 200, 0.9)
+        blue[12] = 0.9
+        red = make_row(350, 100, 450, 200, 0.1)
+        red[9] = 0.9
+        red[12] = 0.9
+        fake_rows = np.stack([blue, red])
+        set_detector_for_tests(lambda frames: [fake_rows.copy() for _ in frames])
+        try:
+            image_data = np.full((384, 640, 3), 40, np.uint8)
+            ok, buf = cv2.imencode(".jpg", image_data)
+            assert ok
+            image = client.post(
+                f"/api/projects/{project['id']}/images/upload",
+                files={"files": ("colors.jpg", io.BytesIO(buf.tobytes()), "image/jpeg")},
+            ).json()[0]
+            client.post(f"/api/projects/{project['id']}/images/{image['id']}/claim")
+
+            blue_suggestion = client.post(
+                f"/api/images/{image['id']}/brush",
+                json={"x": 100 / 640, "y": 150 / 384, "r": 40},
+            ).json()["suggestion"]
+            red_suggestion = client.post(
+                f"/api/images/{image['id']}/brush",
+                json={"x": 400 / 640, "y": 150 / 384, "r": 40},
+            ).json()["suggestion"]
+
+            classes = {cls["name"]: cls for cls in project["classes"]}
+            assert (blue_suggestion["class_name"], blue_suggestion["class_id"]) == (
+                "B-G", classes["B-G"]["id"],
+            )
+            assert (red_suggestion["class_name"], red_suggestion["class_id"]) == (
+                "R-G", classes["R-G"]["id"],
+            )
+        finally:
+            set_detector_for_tests(None)
 
     def test_requires_claim(self, client, project, brush_setup):
         _, image = brush_setup

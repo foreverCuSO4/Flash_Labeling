@@ -122,6 +122,8 @@ def sample_frames(windows: list[tuple[int, int]], fps: float,
 # four corner points (x,y) in 640x384 pixels ordered TL→BL→BR→TR; cols 8-11
 # sigmoid class scores; cols 12-20 a 9-way secondary label head.
 MODEL_W, MODEL_H = 640.0, 384.0
+MODEL_COLOR_LABELS = ("B", "R", "N", "P")
+MODEL_BOARD_TYPE_LABELS = ("G", "1", "2", "3", "4", "5", "O", "Bs", "Bb")
 
 
 def _corner_xy(rows: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -137,7 +139,14 @@ def row_class_index(row: np.ndarray) -> int:
     """Map the 4-way prefix and 9-way board-type heads to one class."""
     prefix = int(np.argmax(row[8:12]))
     board_type = int(np.argmax(row[12:21]))
-    return prefix * 9 + board_type
+    return prefix * len(MODEL_BOARD_TYPE_LABELS) + board_type
+
+
+def row_class_name(row: np.ndarray) -> str:
+    """Return the semantic class name encoded by both detector heads."""
+    color = MODEL_COLOR_LABELS[int(np.argmax(row[8:12]))]
+    board_type = MODEL_BOARD_TYPE_LABELS[int(np.argmax(row[12:21]))]
+    return f"{color}-{board_type}"
 
 
 def row_box_norm(row: np.ndarray) -> tuple[float, float, float, float]:

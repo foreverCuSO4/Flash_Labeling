@@ -287,8 +287,16 @@ async function doBrush(pos) {
       return;
     }
     if (readOnly) return;
+    const modelClassId = Number.isInteger(s.class_id) ? s.class_id : -1;
+    const modelClassName = typeof s.class_name === 'string' ? s.class_name.toLowerCase() : '';
     const modelClassIndex = Number.isInteger(s.class_index) ? s.class_index : -1;
-    const detectedClassIdx = project.classes.findIndex(c => c.ord === modelClassIndex);
+    let detectedClassIdx = project.classes.findIndex(c => c.id === modelClassId);
+    if (detectedClassIdx < 0 && modelClassName) {
+      detectedClassIdx = project.classes.findIndex(c => c.name.toLowerCase() === modelClassName);
+    }
+    if (detectedClassIdx < 0) {
+      detectedClassIdx = project.classes.findIndex(c => c.ord === modelClassIndex);
+    }
     if (detectedClassIdx >= 0) {
       selectedClassIdx = detectedClassIdx;
       renderClasses();

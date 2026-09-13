@@ -10,13 +10,20 @@ from typing import Optional
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from .. import detector as detector_mod
-from ..autolabel import brush_hit, row_box_norm, row_class_index, row_corners_norm, row_score
+from ..autolabel import (
+    brush_hit,
+    row_box_norm,
+    row_class_index,
+    row_class_name,
+    row_corners_norm,
+    row_score,
+)
 from ..config import UPLOAD_DIR
 from ..db import get_session
-from ..models import Image, User
+from ..models import Image, ProjectClass, User
 from ..security import current_user, require_member
 from .images import claim_expired
 
@@ -50,10 +57,20 @@ def brush(image_id: int, body: BrushIn,
         return {"suggestion": None, "cached": cached,
                 "rows": int(len(rows))}
     x, y, w, h = row_box_norm(hit)
+    class_name = row_class_name(hit)
+    project_classes = session.exec(
+        select(ProjectClass).where(ProjectClass.project_id == img.project_id)
+    ).all()
+    mapped_class = next(
+        (cls for cls in project_classes if cls.name.casefold() == class_name.casefold()),
+        None,
+    )
     return {
         "suggestion": {"x": x, "y": y, "w": w, "h": h,
                        "corners": row_corners_norm(hit),
                        "class_index": row_class_index(hit),
+                       "class_name": class_name,
+                       "class_id": mapped_class.id if mapped_class else None,
                        "score": row_score(hit)},
         "cached": cached,
         "rows": int(len(rows)),
