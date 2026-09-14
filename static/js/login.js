@@ -9,13 +9,16 @@ function setMode(m) {
   mode = m;
   nameField.classList.toggle('hidden', m === 'login');
   document.getElementById('name').required = (m === 'register');
-  submitBtn.textContent = m === 'login' ? 'Sign In' : 'Register';
+  submitBtn.textContent = t(m === 'login' ? 'auth.signIn' : 'auth.register');
   tabLogin.style.opacity = m === 'login' ? '1' : '0.5';
   tabRegister.style.opacity = m === 'register' ? '1' : '0.5';
   hideErr(errMsg);
 }
 tabLogin.onclick = () => setMode('login');
 tabRegister.onclick = () => setMode('register');
+window.addEventListener('languagechange', () => {
+  submitBtn.textContent = t(mode === 'login' ? 'auth.signIn' : 'auth.register');
+});
 
 document.getElementById('authForm').onsubmit = async (e) => {
   e.preventDefault();
@@ -31,7 +34,7 @@ document.getElementById('authForm').onsubmit = async (e) => {
     }
     window.location.href = appPath('/projects.html');
   } catch (err) {
-    showErr(errMsg, err.detail || 'Request failed');
+    showErr(errMsg, err.detail || t('common.requestFailed'));
   }
 };
 

@@ -23,9 +23,7 @@ async function init() {
   try { project = await API.get(`/api/projects/${projectId}`); } catch { window.location.href = appPath('/projects.html'); return; }
   isMember = project.role !== null;
   document.getElementById('projName').textContent = project.name;
-  document.getElementById('projRole').textContent = `${project.role || 'guest'} · ${project.mode}`;
-  document.getElementById('projMeta').textContent =
-    `${project.classes.map(c => c.name).join(' · ') || 'No classes'} — ${project.labeled_count}/${project.image_count} labeled`;
+  updateProjectHeader();
   document.getElementById('uploadBtn').href = appPath(`/upload.html?project=${projectId}`);
   document.getElementById('exportBtn').href = appPath(`/api/projects/${projectId}/export`);
   document.getElementById('settingsBtn').href = appPath(`/project_settings.html?id=${projectId}`);
@@ -43,7 +41,7 @@ async function init() {
       try {
         await API.post(`/api/projects/${projectId}/join`);
         window.location.reload();
-      } catch (err) { showErr(errEl, err.detail || 'Join failed'); }
+      } catch (err) { showErr(errEl, err.detail || t('common.joinFailed')); }
     };
     document.getElementById('uploadBtn').classList.add('hidden');
     document.getElementById('claimPanel').classList.add('hidden');
@@ -63,7 +61,7 @@ async function init() {
         await API.post(`/api/projects/${projectId}/members`, { email: document.getElementById('memberEmail').value.trim() });
         document.getElementById('memberEmail').value = '';
         loadMembers();
-      } catch (err) { showErr(errEl, err.detail || 'Failed'); }
+      } catch (err) { showErr(errEl, err.detail || t('common.failed')); }
     };
   }
   loadMembers();
@@ -149,23 +147,39 @@ function toggleSelect(id) {
 
 async function deleteSelected() {
   if (!selected.size) return;
-  if (!confirm(`Delete ${selected.size} selected image(s) and all their annotations? This cannot be undone.`)) return;
+  if (!confirm(t('project.deleteConfirm', { count: selected.size }))) return;
   const errEl = document.getElementById('manageErr');
   hideErr(errEl);
   try {
     await API.post(`/api/projects/${projectId}/images/delete-batch`, { ids: [...selected] });
     selected.clear();
     await loadImages();
-  } catch (err) { showErr(errEl, err.detail || 'Delete failed'); }
+  } catch (err) { showErr(errEl, err.detail || t('common.deleteFailed')); }
 }
 
 async function loadMembers() {
   try {
     const members = await API.get(`/api/projects/${projectId}/members`);
-    document.getElementById('memberList').innerHTML = members.map(m =>
-      `<div class="row-between"><span>${esc(m.name)} <span class="text-mute" style="font-size:12px">${esc(m.email)}</span></span><span class="badge">${m.role}</span></div>`
-    ).join('');
+    window.__projectMembers = members;
+    renderMembers(members);
   } catch {}
+}
+
+function renderMembers(members = window.__projectMembers || []) {
+  document.getElementById('memberList').innerHTML = members.map(m =>
+    `<div class="row-between"><span>${esc(m.name)} <span class="text-mute" style="font-size:12px">${esc(m.email)}</span></span><span class="badge">${esc(t(`role.${m.role}`))}</span></div>`
+  ).join('');
+}
+
+function updateProjectHeader() {
+  if (!project) return;
+  const role = project.role || 'guest';
+  document.getElementById('projRole').textContent = t('project.roleMode', { role: t(`role.${role}`), mode: t(`mode.${project.mode}`) });
+  document.getElementById('projMeta').textContent = t('project.meta', {
+    classes: project.classes.map(c => c.name).join(' · ') || t('projects.noClasses'),
+    labeled: project.labeled_count || 0,
+    total: project.image_count || 0,
+  });
 }
 
 function isClaimed(img) { return img.claimed_by && !img.claim_expired; }
@@ -184,10 +198,11 @@ async function loadImages() {
     renderImages();
     // update header count
     const labeled = allImages.filter(i => i.status === 'labeled').length;
-    document.getElementById('projMeta').textContent =
-      `${project.classes.map(c => c.name).join(' · ') || 'No classes'} — ${labeled}/${allImages.length} labeled`;
+    document.getElementById('projMeta').textContent = t('project.meta', {
+      classes: project.classes.map(c => c.name).join(' · ') || t('projects.noClasses'), labeled, total: allImages.length,
+    });
     const avail = allImages.filter(isAvailable).length;
-    document.getElementById('claimAvail').textContent = `${avail} available to claim`;
+    document.getElementById('claimAvail').textContent = t('project.available', { count: avail });
   } catch {}
 }
 
@@ -195,18 +210,18 @@ function renderImages() {
   const grid = document.getElementById('imageGrid');
   const empty = document.getElementById('emptyImages');
   const filtered = visibleImages();
-  empty.textContent = currentTab === 'mine' ? 'No active claims.' : 'No images uploaded yet.';
+  empty.textContent = currentTab === 'mine' ? t('project.noClaims') : t('project.noImages');
   empty.classList.toggle('hidden', filtered.length > 0 || currentTab === 'stats');
   if (manageOn) {
-    document.getElementById('manageCount').textContent = `${selected.size} selected`;
+    document.getElementById('manageCount').textContent = t('project.selected', { count: selected.size });
   }
   grid.innerHTML = filtered.map(img => {
     const claimed = isClaimed(img);
     const mine = isMine(img);
     const badgeClass = img.status === 'labeled' ? 'badge-labeled' : (claimed ? 'badge-claimed' : 'badge-unlabeled');
-    const badgeText = img.status === 'labeled' ? 'Labeled' : (claimed ? (mine ? 'Mine' : 'Claimed') : 'Unlabeled');
+    const badgeText = img.status === 'labeled' ? t('project.labeledStatus') : (claimed ? (mine ? t('project.mineStatus') : t('project.claimedStatus')) : t('project.unlabeledStatus'));
     const releaseBtn = currentTab === 'mine'
-      ? `<button class="btn btn-ghost-dark btn-sm thumb-release" onclick="releaseImage(${img.id}, event)">Release</button>`
+      ? `<button class="btn btn-ghost-dark btn-sm thumb-release" onclick="releaseImage(${img.id}, event)">${t('project.release')}</button>`
       : '';
     const selectedClass = manageOn && selected.has(img.id) ? ' thumb-selected' : '';
     const check = manageOn ? `<span class="thumb-check">${selected.has(img.id) ? '✓' : ''}</span>` : '';
@@ -219,7 +234,7 @@ function renderImages() {
             <span style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(img.filename)}</span>
             <span class="badge ${badgeClass}">${badgeText}</span>
           </div>
-          <p class="text-mute" style="font-size:12px;margin-top:4px;">${img.annotation_count} box(es)${claimed && img.claimed_by_name ? ' · ' + esc(img.claimed_by_name) : ''}</p>
+          <p class="text-mute" style="font-size:12px;margin-top:4px;">${t('project.boxes', { count: img.annotation_count })}${claimed && img.claimed_by_name ? ' · ' + esc(img.claimed_by_name) : ''}</p>
           ${releaseBtn}
         </div>
       </div>`;
@@ -231,14 +246,14 @@ async function claimBatch() {
   const okEl = document.getElementById('claimOk');
   hideErr(errEl); okEl.classList.add('hidden');
   const count = parseInt(document.getElementById('claimCount').value);
-  if (!count || count < 1) { showErr(errEl, 'Enter a count of at least 1.'); return; }
+  if (!count || count < 1) { showErr(errEl, t('project.enterCount')); return; }
   try {
     const r = await API.post(`/api/projects/${projectId}/images/claim`, { count });
-    okEl.textContent = `Claimed ${r.count} image(s).`;
+    okEl.textContent = t('project.claimedCount', { count: r.count });
     okEl.classList.remove('hidden');
     await loadImages();
     if (r.count > 0) setTab('mine');
-  } catch (err) { showErr(errEl, err.detail || 'Claim failed'); }
+  } catch (err) { showErr(errEl, err.detail || t('common.claimFailed')); }
 }
 
 async function releaseImage(imageId, e) {
@@ -255,10 +270,10 @@ async function loadStats() {
     const stats = await API.get(`/api/projects/${projectId}/stats`);
     panel.innerHTML = `
       <div class="panel">
-        <h2 class="micro-cap mb-2">Member Progress</h2>
+        <h2 class="micro-cap mb-2">${t('project.memberProgress')}</h2>
         <table class="stats-table">
-          <tr class="text-mute"><th>Name</th><th>Role</th><th>Labeled</th><th>Claiming</th></tr>
-          ${stats.map(s => `<tr><td>${esc(s.name)}</td><td>${esc(s.role)}</td><td>${s.labeled_count}</td><td>${s.claimed_count}</td></tr>`).join('')}
+          <tr class="text-mute"><th>${t('project.nameColumn')}</th><th>${t('project.roleColumn')}</th><th>${t('project.labeledColumn')}</th><th>${t('project.claimingColumn')}</th></tr>
+          ${stats.map(s => `<tr><td>${esc(s.name)}</td><td>${esc(t(`role.${s.role}`))}</td><td>${s.labeled_count}</td><td>${s.claimed_count}</td></tr>`).join('')}
         </table>
       </div>`;
   } catch {}
@@ -268,5 +283,13 @@ function openImage(imageId) {
   // View-only by default; the annotate page enables editing when claimed by you.
   window.location.href = appPath(`/annotate.html?project=${projectId}&image=${imageId}`);
 }
+
+window.addEventListener('languagechange', () => {
+  if (!project) return;
+  updateProjectHeader();
+  renderMembers();
+  renderImages();
+  if (currentTab === 'stats') loadStats();
+});
 
 init();

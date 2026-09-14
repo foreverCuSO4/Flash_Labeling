@@ -73,7 +73,7 @@ async function init() {
     leavePage(backLink.href);
   };
   project = await API.get(`/api/projects/${projectId}`);
-  document.title = `Annotate — ${project.name}`;
+  updateAnnotateTitle();
 
   renderClasses();
   if (isPose()) {
@@ -155,24 +155,24 @@ function renderReadonlySummary(isLabeled, isMember, hasActiveClaim) {
   const classCounts = new Map();
   boxes.forEach(box => {
     const cls = project.classes.find(c => c.id === box.class_id);
-    const name = cls ? cls.name : `Class ${box.class_id}`;
+    const name = cls ? cls.name : t('annotate.classFallback', { id: box.class_id });
     classCounts.set(name, (classCounts.get(name) || 0) + 1);
   });
   const classes = [...classCounts.entries()].map(([name, count]) => `${esc(name)} × ${count}`).join(', ');
   const claimInfo = hasActiveClaim
-    ? `<div class="annotate-summary-row"><span>Claimed by</span><strong>${esc(imageMeta.claimed_by_name || 'another user')}</strong></div>`
+    ? `<div class="annotate-summary-row"><span>${t('annotate.claimedBy')}</span><strong>${esc(imageMeta.claimed_by_name || t('annotate.anotherUser'))}</strong></div>`
     : '';
   const accessInfo = !isMember
-    ? '<p class="text-mute annotate-summary-note">Join this project to claim and annotate images.</p>'
-    : (hasActiveClaim ? '<p class="text-mute annotate-summary-note">This image is currently being annotated by another user.</p>' : '');
+    ? `<p class="text-mute annotate-summary-note">${t('annotate.joinToAnnotate')}</p>`
+    : (hasActiveClaim ? `<p class="text-mute annotate-summary-note">${t('annotate.otherAnnotator')}</p>` : '');
   readonlySummary.innerHTML = `
-    <p class="micro-cap mb-2">Annotation summary</p>
+    <p class="micro-cap mb-2">${t('annotate.summary')}</p>
     <div class="annotate-summary-list">
-      <div class="annotate-summary-row"><span>Status</span><strong>${isLabeled ? 'Labeled' : 'Unlabeled'}</strong></div>
-      <div class="annotate-summary-row"><span>Instances</span><strong>${Number(imageMeta.annotation_count) || boxes.length || 0}</strong></div>
-      ${classes ? `<div class="annotate-summary-row"><span>Classes</span><strong>${classes}</strong></div>` : ''}
-      ${isLabeled ? `<div class="annotate-summary-row"><span>Labeled by</span><strong>${esc(imageMeta.labeled_by_name || '—')}</strong></div>` : ''}
-      ${isLabeled ? `<div class="annotate-summary-row"><span>Labeled at</span><strong>${esc(formatAnnotationDate(imageMeta.labeled_at))}</strong></div>` : ''}
+      <div class="annotate-summary-row"><span>${t('annotate.status')}</span><strong>${isLabeled ? t('project.labeledStatus') : t('project.unlabeledStatus')}</strong></div>
+      <div class="annotate-summary-row"><span>${t('annotate.instances')}</span><strong>${Number(imageMeta.annotation_count) || boxes.length || 0}</strong></div>
+      ${classes ? `<div class="annotate-summary-row"><span>${t('settings.classes')}</span><strong>${classes}</strong></div>` : ''}
+      ${isLabeled ? `<div class="annotate-summary-row"><span>${t('annotate.labeledBy')}</span><strong>${esc(imageMeta.labeled_by_name || '—')}</strong></div>` : ''}
+      ${isLabeled ? `<div class="annotate-summary-row"><span>${t('annotate.labeledAt')}</span><strong>${esc(formatAnnotationDate(imageMeta.labeled_at))}</strong></div>` : ''}
       ${claimInfo}
     </div>
     ${accessInfo}
@@ -183,7 +183,7 @@ async function claimThis() {
   try {
     await API.post(`/api/projects/${projectId}/images/${imageId}/claim`);
     window.location.reload();
-  } catch (err) { showErr(errMsg, err.detail || 'Claim failed'); }
+  } catch (err) { showErr(errMsg, err.detail || t('common.claimFailed')); }
 }
 
 function setBrush(on) {
@@ -197,7 +197,7 @@ function setBrush(on) {
     brushCursor = null;
     brushStatus.classList.add('hidden');
   }
-  brushBtn.textContent = `Brush: ${brushOn ? 'On' : 'Off'}`;
+  brushBtn.textContent = brushOn ? t('annotate.brushOn') : t('annotate.brushOff');
   brushBtn.classList.toggle('active', brushOn);
   redraw();
 }
@@ -289,7 +289,7 @@ async function doBrush(pos) {
     const res = await API.post(`/api/images/${imageId}/brush`, { x: nx, y: ny, r: rPx });
     const s = res.suggestion;
     if (!s) {
-      okMsg.textContent = `No detection in the brush area (${res.rows} cached row(s)).`;
+      okMsg.textContent = t('annotate.noDetection', { count: res.rows });
       okMsg.classList.remove('hidden');
       setTimeout(() => okMsg.classList.add('hidden'), 1500);
       return;
@@ -336,16 +336,16 @@ async function doBrush(pos) {
   } catch (err) {
     const detail = typeof err.detail === 'string' ? err.detail : '';
     if (err.status === 503) {
-      showErr(errMsg, `Auto-suggest unavailable: ${detail || 'inference service not running'}`);
+      showErr(errMsg, t('annotate.autosuggestUnavailable', { detail: detail || t('annotate.inferenceUnavailable') }));
     } else {
-      showErr(errMsg, detail || 'Brush failed');
+      showErr(errMsg, detail || t('annotate.brushFailed'));
     }
   }
 }
 
 function renderClasses() {
   const selected = project.classes[selectedClassIdx];
-  classPickerBtn.textContent = selected ? `Class: ${selected.name}` : 'Select class';
+  classPickerBtn.textContent = selected ? `${t('annotate.class')}: ${selected.name}` : t('annotate.selectClass');
   classList.innerHTML = project.classes.map((c, i) => `
     <div class="class-item ${i === selectedClassIdx ? 'active' : ''}" data-idx="${i}" role="option" aria-selected="${i === selectedClassIdx}" title="${esc(c.description || '')}">
       <span class="class-swatch" style="background:${CLASS_COLORS[i % CLASS_COLORS.length]}"></span>
@@ -370,15 +370,19 @@ function renderKpPanel() {
     return `<div class="kp-tile${active}${done}" data-kp="${i}" title="${esc(name)}" aria-label="${esc(name)}">${i}</div>`;
   }).join('');
   if (placing) {
-    kpStatus.textContent = `Click: ${project.keypoints[placing.nextKp]} (v=${placingVis}, V to toggle, Esc to cancel)`;
+    kpStatus.textContent = t('annotate.clickKeypoint', { name: project.keypoints[placing.nextKp], visibility: placingVis });
   } else {
-    kpStatus.textContent = 'Draw a box to start an instance, or click empty canvas to place keypoints directly (box is derived).';
+    kpStatus.textContent = t('annotate.startInstance');
   }
 }
 
 function updateNavInfo(images) {
   const idx = images.findIndex(i => i.id === imageId);
   document.getElementById('navInfo').textContent = `${idx + 1} / ${images.length}`;
+}
+
+function updateAnnotateTitle() {
+  if (project) document.title = `${t('title.annotate').split(' — ')[0]} — ${project.name}`;
 }
 
 function boxesFromAnnotations(anns) {
@@ -457,6 +461,16 @@ function prefetchAdjacentImages() {
     loadAnnotationsFor(neighbor.id).catch(() => {});
   }
 }
+
+window.addEventListener('languagechange', () => {
+  updateAnnotateTitle();
+  if (project) {
+    renderClasses();
+    if (isPose()) renderKpPanel();
+    if (imageMeta) applyReadOnly();
+    brushBtn.textContent = brushOn ? t('annotate.brushOn') : t('annotate.brushOff');
+  }
+});
 
 function setSwitchingImage(value) {
   switchingImage = value;
@@ -1068,11 +1082,11 @@ async function persistAnnotations(auto = false) {
   if (readOnly) return;
   if (!auto) { hideErr(errMsg); okMsg.classList.add('hidden'); }
   if (placing) {
-    if (!auto) showErr(errMsg, 'Finish or cancel the current keypoint placement first (Esc).');
+    if (!auto) showErr(errMsg, t('annotate.finishKeypoint'));
     return;
   }
   if (polyDraft) {
-    if (!auto) showErr(errMsg, 'Finish or cancel the current polygon first (Enter to close, Esc to cancel).');
+    if (!auto) showErr(errMsg, t('annotate.finishPolygon'));
     return;
   }
   try {
@@ -1082,10 +1096,10 @@ async function persistAnnotations(auto = false) {
     const payload = boxes.map(({ corners, ...box }) => box);
     await API.put(`/api/images/${imageId}/annotations`, payload);
     annotationCache.set(imageId, JSON.parse(JSON.stringify(payload)));
-    okMsg.textContent = auto ? 'Auto-saved.' : `Saved ${boxes.length} instance(s).`;
+    okMsg.textContent = auto ? t('annotate.autosaved') : t('annotate.savedInstances', { count: boxes.length });
     okMsg.classList.remove('hidden');
     if (auto) setTimeout(() => okMsg.classList.add('hidden'), 1200);
-  } catch (err) { showErr(errMsg, err.detail || 'Save failed'); }
+  } catch (err) { showErr(errMsg, err.detail || t('common.saveFailed')); }
 }
 
 function save() { return enqueueSave(false); }
@@ -1104,9 +1118,9 @@ async function clearAll() {
     await flushPendingOperations();
     await API.del(`/api/images/${imageId}/annotations`);
     annotationCache.set(imageId, []);
-    okMsg.textContent = 'Cleared.';
+    okMsg.textContent = t('annotate.cleared');
     okMsg.classList.remove('hidden');
-  } catch (err) { showErr(errMsg, err.detail || 'Clear failed'); }
+  } catch (err) { showErr(errMsg, err.detail || t('common.clearFailed')); }
 }
 
 async function releaseClaim() {
@@ -1114,7 +1128,7 @@ async function releaseClaim() {
     await flushPendingOperations();
     await API.post(`/api/projects/${projectId}/images/${imageId}/release`);
     window.location.href = appPath(`/project.html?id=${projectId}`);
-  } catch (err) { showErr(errMsg, err.detail || 'Release failed'); }
+  } catch (err) { showErr(errMsg, err.detail || t('common.releaseFailed')); }
 }
 
 async function navigate(dir) {
@@ -1135,7 +1149,7 @@ async function navigate(dir) {
     history.replaceState(null, '', appPath(`/annotate.html?project=${projectId}&image=${next.id}`));
     prefetchAdjacentImages();
   } catch (err) {
-    showErr(errMsg, err.detail || 'Unable to load the next image');
+    showErr(errMsg, err.detail || t('common.unableNext'));
   } finally {
     setSwitchingImage(false);
   }

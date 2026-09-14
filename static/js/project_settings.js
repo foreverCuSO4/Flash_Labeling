@@ -17,11 +17,11 @@ async function init() {
   isOwner = project.role === 'owner';
   document.getElementById('backLink').href = appPath(`/project.html?id=${projectId}`);
   document.getElementById('projName').textContent = project.name;
-  document.getElementById('projMode').textContent = `Mode: ${project.mode}`;
+  document.getElementById('projMode').textContent = t('project.mode', { mode: t(`mode.${project.mode}`) });
   if (!isOwner) {
     document.getElementById('readonlyNotice').style.display = 'block';
     document.querySelectorAll('.owner-only').forEach(el => el.style.display = 'none');
-    document.querySelectorAll('input, textarea, select').forEach(el => el.disabled = true);
+    document.querySelectorAll('input:not([data-language-select]), textarea, select:not([data-language-select])').forEach(el => el.disabled = true);
   }
 
   document.getElementById('editName').value = project.name;
@@ -41,7 +41,7 @@ async function init() {
 
 function bindEvents() {
   const okMsg = document.getElementById('saveOk');
-  const flash = () => { okMsg.textContent = 'Saved.'; okMsg.classList.remove('hidden'); setTimeout(() => okMsg.classList.add('hidden'), 2000); };
+  const flash = () => { okMsg.textContent = t('settings.saved'); okMsg.classList.remove('hidden'); setTimeout(() => okMsg.classList.add('hidden'), 2000); };
 
   document.getElementById('saveNameBtn').onclick = async () => {
     try {
@@ -49,7 +49,7 @@ function bindEvents() {
       project.name = document.getElementById('editName').value.trim();
       document.getElementById('projName').textContent = project.name;
       flash();
-    } catch (err) { alert(err.detail || 'Failed'); }
+    } catch (err) { alert(err.detail || t('common.failed')); }
   };
 
   document.getElementById('saveGuidelinesBtn').onclick = async () => {
@@ -58,7 +58,7 @@ function bindEvents() {
     try {
       await API.request('PATCH', `/api/projects/${projectId}`, { guidelines: document.getElementById('editGuidelines').value });
       flash();
-    } catch (err) { showErr(errEl, err.detail || 'Failed'); }
+    } catch (err) { showErr(errEl, err.detail || t('common.failed')); }
   };
 
   document.getElementById('saveModelBtn').onclick = async () => {
@@ -71,7 +71,7 @@ function bindEvents() {
       });
       await reloadProject();
       flash();
-    } catch (err) { showErr(errEl, err.detail || 'Failed to select model'); }
+    } catch (err) { showErr(errEl, err.detail || t('common.failedSelectModel')); }
   };
 
   document.getElementById('modelUploadForm').onsubmit = async (e) => {
@@ -87,7 +87,7 @@ function bindEvents() {
       document.getElementById('modelFile').value = '';
       renderModels();
       flash();
-    } catch (err) { showErr(errEl, err.detail || 'Model upload failed'); }
+    } catch (err) { showErr(errEl, err.detail || t('common.modelUploadFailed')); }
   };
 
   document.getElementById('editGuidelines').addEventListener('input', renderPreview);
@@ -104,7 +104,7 @@ function bindEvents() {
       document.getElementById('newClassName').value = '';
       document.getElementById('newClassDesc').value = '';
       await reloadProject();
-    } catch (err) { showErr(errEl, err.detail || 'Failed'); }
+    } catch (err) { showErr(errEl, err.detail || t('common.failed')); }
   };
 
   document.getElementById('savePoseBtn').onclick = async () => {
@@ -125,7 +125,7 @@ function bindEvents() {
     try {
       await API.request('PATCH', `/api/projects/${projectId}`, { keypoints, skeleton });
       flash();
-    } catch (err) { showErr(errEl, err.detail || 'Failed'); }
+    } catch (err) { showErr(errEl, err.detail || t('common.failed')); }
   };
 }
 
@@ -140,9 +140,9 @@ function renderClasses() {
     <div class="row" data-cid="${c.id}">
       <span class="badge">${c.ord}</span>
       <input type="text" class="cls-name" value="${esc(c.name)}" style="width:180px" ${isOwner ? '' : 'disabled'}>
-      <input type="text" class="cls-desc" value="${esc(c.description || '')}" placeholder="Description" style="flex:1" ${isOwner ? '' : 'disabled'}>
-      ${isOwner ? `<button class="btn btn-ghost-dark btn-sm cls-save">Save</button>
-      <button class="btn btn-ghost-dark btn-sm cls-del">Delete</button>` : ''}
+      <input type="text" class="cls-desc" value="${esc(c.description || '')}" data-i18n-placeholder="settings.description" placeholder="${esc(t('settings.description'))}" style="flex:1" ${isOwner ? '' : 'disabled'}>
+      ${isOwner ? `<button class="btn btn-ghost-dark btn-sm cls-save" data-i18n="settings.save">${t('settings.save')}</button>
+      <button class="btn btn-ghost-dark btn-sm cls-del" data-i18n="settings.delete">${t('settings.delete')}</button>` : ''}
     </div>
   `).join('');
   if (!isOwner) return;
@@ -157,15 +157,15 @@ function renderClasses() {
           description: row.querySelector('.cls-desc').value.trim(),
         });
         await reloadProject();
-      } catch (err) { showErr(errEl, err.detail || 'Failed'); }
+      } catch (err) { showErr(errEl, err.detail || t('common.failed')); }
     };
     row.querySelector('.cls-del').onclick = async () => {
       hideErr(errEl);
-      if (!confirm('Delete this class?')) return;
+      if (!confirm(t('settings.deleteClassConfirm'))) return;
       try {
         await API.del(`/api/projects/${projectId}/classes/${cid}`);
         await reloadProject();
-      } catch (err) { showErr(errEl, err.detail || 'Failed'); }
+      } catch (err) { showErr(errEl, err.detail || t('common.failed')); }
     };
   });
 }
@@ -179,9 +179,16 @@ async function reloadProject() {
 function renderModels() {
   const select = document.getElementById('modelSelect');
   if (!select || !project) return;
-  select.innerHTML = `<option value="">${esc(project.model?.builtin ? project.model.name : 'Built-in model')}</option>`
+  select.innerHTML = `<option value="">${esc(project.model?.builtin ? project.model.name : t('settings.builtinModel'))}</option>`
     + (project.models || []).map(m => `<option value="${m.id}">${esc(m.name)} (${esc(m.filename)})</option>`).join('');
   select.value = project.model?.id == null ? '' : String(project.model.id);
 }
+
+window.addEventListener('languagechange', () => {
+  if (!project) return;
+  document.getElementById('projMode').textContent = t('project.mode', { mode: t(`mode.${project.mode}`) });
+  renderModels();
+  I18n.applyTranslations();
+});
 
 init();

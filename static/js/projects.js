@@ -14,7 +14,7 @@ async function init() {
     try {
       await API.post('/api/users/me/avatar', fd, true);
       avatarImg.src = appPath(`/api/users/${user.id}/avatar?v=${Date.now()}`);
-    } catch (err) { alert(err.detail || 'Avatar upload failed'); }
+    } catch (err) { alert(err.detail || t('projects.avatarUploadFailed')); }
     avatarInput.value = '';
   };
 
@@ -58,7 +58,7 @@ async function init() {
       document.getElementById('projSkeleton').value = '';
       createPanel.classList.add('hidden');
       loadProjects();
-    } catch (err) { showErr(createErr, err.detail || 'Failed'); }
+    } catch (err) { showErr(createErr, err.detail || t('common.failed')); }
   };
 
   // Create from an uploaded dataset.yaml file
@@ -68,11 +68,11 @@ async function init() {
     hideErr(yamlErr);
     const file = document.getElementById('yamlFile').files[0];
     if (!file) {
-      showErr(yamlErr, '请选择一个 .yaml 或 .yml 文件。');
+      showErr(yamlErr, t('projects.chooseYaml'));
       return;
     }
     if (!file.size) {
-      showErr(yamlErr, '所选 YAML 文件为空，请选择非空的 .yaml 或 .yml 文件。');
+      showErr(yamlErr, t('projects.yamlEmpty'));
       return;
     }
     const name = document.getElementById('yamlName').value.trim();
@@ -82,18 +82,18 @@ async function init() {
       try {
         content = await file.text();
       } catch (readErr) {
-        showErr(yamlErr, `无法读取所选文件“${file.name}”：${readErr.message || '浏览器无法读取文件'}。请把 YAML 下载到当前电脑后重新选择。`);
+        showErr(yamlErr, t('projects.yamlRead', { name: file.name, detail: readErr.message || 'Browser could not read the file' }));
         return;
       }
       if (!content.trim()) {
-        showErr(yamlErr, '所选 YAML 文件没有内容，请选择非空的 .yaml 或 .yml 文件。');
+        showErr(yamlErr, t('projects.yamlNoContent'));
         return;
       }
       proj = await API.post('/api/projects/from-yaml-text', {
         filename: file.name || 'dataset.yaml', content, name,
       });
     } catch (err) {
-      showErr(yamlErr, `${err.detail || '创建项目失败'}（文件：${file.name || '未命名'}，${file.size} 字节）`);
+      showErr(yamlErr, t('projects.yamlCreateDetail', { detail: err.detail || t('common.createProjectFailed'), name: file.name || 'unnamed', size: file.size }));
       return;
     }
     document.getElementById('yamlFile').value = '';
@@ -111,16 +111,24 @@ async function loadProjects() {
   const emptyMsg = document.getElementById('emptyMsg');
   try {
     const projects = await API.get('/api/projects');
+    window.__projectsData = projects;
     emptyMsg.classList.toggle('hidden', projects.length > 0);
-    list.innerHTML = projects.map(p => `
+    renderProjects(projects);
+  } catch { list.innerHTML = `<p class="error">${t('common.loadProjectsFailed')}</p>`; }
+}
+
+function renderProjects(projects = window.__projectsData || []) {
+  const list = document.getElementById('projectList');
+  list.innerHTML = projects.map(p => `
       <div class="panel" style="cursor:pointer" onclick="window.location.href=appPath('/project.html?id=${p.id}')">
-        <p class="micro-cap">${esc(p.role || 'view')}</p>
+        <p class="micro-cap">${esc(p.role ? t(`role.${p.role}`) : t('projects.viewRole'))}</p>
         <h3 style="font-family:var(--font-display);font-size:24px;text-transform:uppercase;letter-spacing:0.96px;">${esc(p.name)}</h3>
-        <p class="text-mute mt-2"><span class="badge">${p.mode}</span> ${p.classes.map(c => esc(c.name)).join(' · ') || 'No classes'}</p>
-        <p class="text-mute mt-2" style="font-size:13px;">${p.labeled_count}/${p.image_count} labeled</p>
+        <p class="text-mute mt-2"><span class="badge">${esc(t(`mode.${p.mode}`))}</span> ${p.classes.map(c => esc(c.name)).join(' · ') || t('projects.noClasses')}</p>
+        <p class="text-mute mt-2" style="font-size:13px;">${t('projects.labeled', { count: `${p.labeled_count}/${p.image_count}` })}</p>
       </div>
     `).join('');
-  } catch { list.innerHTML = '<p class="error">Failed to load projects.</p>'; }
 }
+
+window.addEventListener('languagechange', () => renderProjects());
 
 init();
