@@ -3,44 +3,46 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Settings — Flash Labeling</title>
+  <title data-i18n="title.settings">Settings — Flash Labeling</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <nav>
     <div class="row" style="gap:16px">
-      <a class="logo" href="#" id="backLink">&larr; Project</a>
-      <span class="micro-cap">Settings</span>
+      <a class="logo" href="#" id="backLink"><span aria-hidden="true">&larr;</span> <span data-i18n="nav.project">Project</span></a>
+      <span class="micro-cap" data-i18n="nav.settings">Settings</span>
     </div>
     <div class="nav-links">
       <span id="userName" class="text-mute"></span>
-      <button class="nav-btn" id="logoutBtn">Sign Out</button>
+      <button class="nav-btn" id="logoutBtn" data-i18n="nav.signOut">Sign Out</button>
+      <label class="sr-only" for="languageSelect" data-i18n="language.label">Language</label>
+      <select id="languageSelect" data-language-select data-i18n-aria-label="language.label"><option value="zh">中文</option><option value="en">English</option></select>
     </div>
   </nav>
   <div class="container">
     <h1 class="display-lg mb-2" id="projName"></h1>
     <p class="micro-cap mb-4" id="projMode"></p>
-    <p class="text-mute mb-4" id="readonlyNotice" style="display:none">You are an annotator — settings are read-only.</p>
+    <p class="text-mute mb-4" id="readonlyNotice" data-i18n="settings.readonly" style="display:none">You are an annotator — settings are read-only.</p>
 
     <!-- Section: general -->
     <div class="panel mb-4">
-      <h2 class="micro-cap mb-2">General</h2>
+      <h2 class="micro-cap mb-2" data-i18n="settings.general">General</h2>
       <div class="col" style="max-width:480px">
-        <div><label>Project Name</label><input type="text" id="editName"></div>
-        <button class="btn btn-ghost-dark btn-sm owner-only" id="saveNameBtn" style="align-self:flex-start">Save Name</button>
+        <div><label data-i18n="settings.name">Project Name</label><input type="text" id="editName"></div>
+        <button class="btn btn-ghost-dark btn-sm owner-only" id="saveNameBtn" data-i18n="settings.saveName" style="align-self:flex-start">Save Name</button>
       </div>
     </div>
 
     <!-- Section: inference model -->
     <div class="panel mb-4">
-      <h2 class="micro-cap mb-2">Inference Model</h2>
-      <p class="text-mute mb-2" style="font-size:13px">The selected model is used for both Model auto-scan frame extraction and automatic annotation. The built-in model is selected by default. Uploaded ONNX models must use the same 640x384 image input and [N, 5040, 21] output format.</p>
+      <h2 class="micro-cap mb-2" data-i18n="settings.inference">Inference Model</h2>
+      <p class="text-mute mb-2" data-i18n="settings.inferenceHelp" style="font-size:13px">The selected model is used for both Model auto-scan frame extraction and automatic annotation. The built-in model is selected by default. Uploaded ONNX models must use the same 640x384 image input and [N, 5040, 21] output format.</p>
       <div class="col" style="max-width:640px">
-        <div><label>Active Model</label><select id="modelSelect"></select></div>
-        <button class="btn btn-ghost-dark btn-sm owner-only" id="saveModelBtn" style="align-self:flex-start">Save Model</button>
+        <div><label data-i18n="settings.activeModel">Active Model</label><select id="modelSelect"></select></div>
+        <button class="btn btn-ghost-dark btn-sm owner-only" id="saveModelBtn" data-i18n="settings.saveModel" style="align-self:flex-start">Save Model</button>
         <form id="modelUploadForm" class="row owner-only" style="align-items:end">
-          <div style="flex:1"><label>Upload ONNX model</label><input type="file" id="modelFile" accept=".onnx" required></div>
-          <button type="submit" class="btn btn-ghost-dark btn-sm">Upload &amp; Use</button>
+          <div style="flex:1"><label data-i18n="settings.uploadOnnx">Upload ONNX model</label><input type="file" id="modelFile" accept=".onnx" required></div>
+          <button type="submit" class="btn btn-ghost-dark btn-sm" data-i18n="settings.uploadUse">Upload &amp; Use</button>
         </form>
         <p class="error hidden" id="modelErr"></p>
       </div>
@@ -48,44 +50,45 @@
 
     <!-- Section: classes -->
     <div class="panel mb-4">
-      <h2 class="micro-cap mb-2">Classes</h2>
-      <p class="text-mute mb-2" style="font-size:13px">Each class has a name (exported to YOLO) and a description (what it means, shown to annotators).</p>
+      <h2 class="micro-cap mb-2" data-i18n="settings.classes">Classes</h2>
+      <p class="text-mute mb-2" data-i18n="settings.classesHelp" style="font-size:13px">Each class has a name (exported to YOLO) and a description (what it means, shown to annotators).</p>
       <div id="classRows" class="col mb-2"></div>
       <form id="addClassForm" class="row owner-only">
-        <input type="text" id="newClassName" placeholder="Class name" required style="width:200px">
-        <input type="text" id="newClassDesc" placeholder="Description (optional)" style="flex:1">
-        <button type="submit" class="btn btn-ghost-dark btn-sm">Add</button>
+        <input type="text" id="newClassName" data-i18n-placeholder="settings.className" placeholder="Class name" required style="width:200px">
+        <input type="text" id="newClassDesc" data-i18n-placeholder="settings.descriptionOptional" placeholder="Description (optional)" style="flex:1">
+        <button type="submit" class="btn btn-ghost-dark btn-sm" data-i18n="settings.add">Add</button>
       </form>
       <p class="error hidden" id="classErr"></p>
     </div>
 
     <!-- Section: pose config (pose projects only) -->
     <div class="panel mb-4 hidden" id="posePanel">
-      <h2 class="micro-cap mb-2">Pose Keypoints</h2>
-      <p class="text-mute mb-2" style="font-size:13px">Comma-separated keypoint names, in YOLO order. Skeleton edges connect keypoint indices (e.g. <code>0-1, 1-2</code>).</p>
+      <h2 class="micro-cap mb-2" data-i18n="settings.pose">Pose Keypoints</h2>
+      <p class="text-mute mb-2" data-i18n="settings.poseHelp" style="font-size:13px">Comma-separated keypoint names, in YOLO order. Skeleton edges connect keypoint indices (e.g. <code>0-1, 1-2</code>).</p>
       <div class="col">
-        <div><label>Keypoints</label><input type="text" id="editKeypoints" placeholder="nose, left_eye, right_eye, ..."></div>
-        <div><label>Skeleton Edges</label><input type="text" id="editSkeleton" placeholder="0-1, 0-2, 1-3, 2-4"></div>
-        <button class="btn btn-ghost-dark btn-sm owner-only" id="savePoseBtn" style="align-self:flex-start">Save Pose Config</button>
+        <div><label data-i18n="settings.keypoints">Keypoints</label><input type="text" id="editKeypoints" placeholder="nose, left_eye, right_eye, ..."></div>
+        <div><label data-i18n="settings.skeleton">Skeleton Edges</label><input type="text" id="editSkeleton" placeholder="0-1, 0-2, 1-3, 2-4"></div>
+        <button class="btn btn-ghost-dark btn-sm owner-only" id="savePoseBtn" data-i18n="settings.savePose" style="align-self:flex-start">Save Pose Config</button>
         <p class="error hidden" id="poseErr"></p>
       </div>
     </div>
 
     <!-- Section: guidelines -->
     <div class="panel mb-4">
-      <h2 class="micro-cap mb-2">Annotation Guidelines</h2>
-      <p class="text-mute mb-2" style="font-size:13px">Markdown supported. Shown to annotators on the project page.</p>
+      <h2 class="micro-cap mb-2" data-i18n="settings.guidelines">Annotation Guidelines</h2>
+      <p class="text-mute mb-2" data-i18n="settings.guidelinesHelp" style="font-size:13px">Markdown supported. Shown to annotators on the project page.</p>
       <div class="grid-2">
         <textarea id="editGuidelines" rows="14" placeholder="# Labeling rules&#10;&#10;- Draw tight boxes around **cars**&#10;- Skip occluded persons"></textarea>
         <div class="md-preview" id="guidelinesPreview"></div>
       </div>
-      <button class="btn btn-ghost-dark btn-sm owner-only mt-2" id="saveGuidelinesBtn">Save Guidelines</button>
+      <button class="btn btn-ghost-dark btn-sm owner-only mt-2" id="saveGuidelinesBtn" data-i18n="settings.saveGuidelines">Save Guidelines</button>
       <p class="error hidden" id="guidelinesErr"></p>
       <p class="success hidden" id="saveOk"></p>
     </div>
   </div>
   <script src="vendor/marked.min.js"></script>
   <script src="js/api.js"></script>
+  <script src="js/i18n.js"></script>
   <script src="js/project_settings.js"></script>
 </body>
 </html>

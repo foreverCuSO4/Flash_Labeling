@@ -3,71 +3,73 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Annotate — Flash Labeling</title>
+  <title data-i18n="title.annotate">Annotate — Flash Labeling</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body style="overflow:hidden">
   <nav>
     <div class="row" style="gap:16px">
-      <a class="logo" href="#" id="backLink">&larr; Back</a>
+      <a class="logo" href="#" id="backLink"><span aria-hidden="true">&larr;</span> <span data-i18n="nav.back">Back</span></a>
       <span class="micro-cap" id="imageName"></span>
     </div>
     <div class="nav-links">
       <span class="micro-cap text-mute" id="navInfo"></span>
-      <button class="nav-btn" id="prevBtn">&larr; Prev</button>
-      <button class="nav-btn" id="nextBtn">Next &rarr;</button>
+      <button class="nav-btn" id="prevBtn"><span aria-hidden="true">&larr;</span> <span data-i18n="nav.prev">Prev</span></button>
+      <button class="nav-btn" id="nextBtn"><span data-i18n="nav.next">Next</span> <span aria-hidden="true">&rarr;</span></button>
+      <label class="sr-only" for="languageSelect" data-i18n="language.label">Language</label>
+      <select id="languageSelect" data-language-select data-i18n-aria-label="language.label"><option value="zh">中文</option><option value="en">English</option></select>
     </div>
   </nav>
   <div class="annotate-layout">
     <div class="annotate-sidebar">
       <div id="annotationEditor">
         <div class="annotate-class-section">
-          <p class="micro-cap mb-2">Class</p>
+          <p class="micro-cap mb-2" data-i18n="annotate.class">Class</p>
           <div class="class-picker-wrap">
-            <button class="btn btn-ghost-dark btn-sm class-picker-btn" id="classPickerBtn" type="button" aria-expanded="false" aria-controls="classPickerCard">Select class</button>
+            <button class="btn btn-ghost-dark btn-sm class-picker-btn" id="classPickerBtn" type="button" aria-expanded="false" aria-controls="classPickerCard" data-i18n="annotate.selectClass">Select class</button>
             <div id="classPickerCard" class="class-picker-card hidden" role="listbox">
               <div id="classList" class="col class-picker-list"></div>
             </div>
           </div>
-          <p class="text-mute" style="font-size:12px;margin-top:8px;">Keys 1-8 to select</p>
-          <p class="text-mute hidden" id="segHint" style="font-size:12px;margin-top:4px;">Polygon: click to add points, click first point / double-click / Enter to close, Esc to cancel. Drag vertices of the selected polygon to adjust.</p>
+          <p class="text-mute" data-i18n="annotate.keysSelect" style="font-size:12px;margin-top:8px;">Keys 1-8 to select</p>
+          <p class="text-mute hidden" id="segHint" data-i18n="annotate.polygonHint" style="font-size:12px;margin-top:4px;">Polygon: click to add points, click first point / double-click / Enter to close, Esc to cancel. Drag vertices of the selected polygon to adjust.</p>
         </div>
         <div id="kpPanel" class="hidden">
-          <p class="micro-cap mb-2">Keypoints</p>
+          <p class="micro-cap mb-2" data-i18n="annotate.keypoints">Keypoints</p>
           <div id="kpList" class="kp-grid"></div>
           <p id="kpStatus" class="text-mute" style="font-size:12px;margin-top:8px;"></p>
         </div>
         <div>
-          <p class="micro-cap mb-2">Boxes</p>
+          <p class="micro-cap mb-2" data-i18n="annotate.boxes">Boxes</p>
           <p id="boxCount" class="text-mute">0</p>
         </div>
         <div id="brushPanel">
-          <p class="micro-cap mb-2">Brush <span class="text-mute" style="font-size:11px">(B)</span></p>
+          <p class="micro-cap mb-2"><span data-i18n="annotate.brush">Brush</span> <span class="text-mute" style="font-size:11px">(B)</span></p>
           <div class="row" style="gap:8px">
-            <button class="btn btn-ghost-dark btn-sm" id="brushBtn" style="min-width:90px">Brush: Off</button>
-            <input type="range" id="brushRadius" min="15" max="200" step="5" value="60" style="flex:1" title="brush radius (mouse wheel on canvas)">
+            <button class="btn btn-ghost-dark btn-sm" id="brushBtn" data-i18n="annotate.brushOff" style="min-width:90px">Brush: Off</button>
+            <input type="range" id="brushRadius" min="15" max="200" step="5" value="60" style="flex:1" data-i18n-title="annotate.brushRadius" title="brush radius (mouse wheel on canvas)">
           </div>
-          <p class="text-mute hidden" id="brushStatus" style="font-size:12px;margin-top:4px;">Click a detected object to preview its four-corner quadrilateral. Scroll on the canvas to change brush size.</p>
+          <p class="text-mute hidden" id="brushStatus" data-i18n="annotate.brushHelp" style="font-size:12px;margin-top:4px;">Click a detected object to preview its four-corner quadrilateral. Scroll on the canvas to change brush size.</p>
         </div>
       </div>
       <div id="readonlySummary" class="annotate-readonly-summary hidden"></div>
       <div id="annotateControls" style="margin-top:auto" class="col annotate-controls">
-        <button class="btn btn-ghost-dark btn-sm" id="shortcutBtn" type="button" aria-expanded="false" aria-controls="shortcutCard">⌨ Shortcuts</button>
+        <button class="btn btn-ghost-dark btn-sm" id="shortcutBtn" type="button" aria-expanded="false" aria-controls="shortcutCard">⌨ <span data-i18n="annotate.shortcuts">Shortcuts</span></button>
         <div id="shortcutCard" class="shortcut-card hidden" role="note">
-          <div class="shortcut-row"><kbd>B</kbd><span>Close brush mode</span></div>
-          <div class="shortcut-row"><kbd>Scroll</kbd><span>Change brush size</span></div>
-          <div class="shortcut-row"><kbd>← / →</kbd><span>Previous / next image</span></div>
-          <div class="shortcut-row"><kbd>Right click</kbd><span>Erase annotation</span></div>
-          <div class="shortcut-row"><kbd>1–8</kbd><span>Select class</span></div>
-          <div class="shortcut-row"><kbd>V</kbd><span>Toggle keypoint visibility</span></div>
-          <div class="shortcut-row"><kbd>Esc</kbd><span>Cancel placement / clear selection</span></div>
-          <div class="shortcut-row"><kbd>S</kbd><span>Save now (annotations also auto-save)</span></div>
+          <div class="shortcut-row"><kbd>B</kbd><span data-i18n="annotate.closeBrush">Close brush mode</span></div>
+          <div class="shortcut-row"><kbd data-i18n="annotate.scroll">Scroll</kbd><span data-i18n="annotate.changeBrush">Change brush size</span></div>
+          <div class="shortcut-row"><kbd>← / →</kbd><span data-i18n="annotate.previousNext">Previous / next image</span></div>
+          <div class="shortcut-row"><kbd data-i18n="annotate.rightClick">Right click</kbd><span data-i18n="annotate.erase">Erase annotation</span></div>
+          <div class="shortcut-row"><kbd>1–8</kbd><span data-i18n="annotate.selectClassShortcut">Select class</span></div>
+          <div class="shortcut-row"><kbd>V</kbd><span data-i18n="annotate.toggleVisibility">Toggle keypoint visibility</span></div>
+          <div class="shortcut-row"><kbd>Esc</kbd><span data-i18n="annotate.cancel">Cancel placement / clear selection</span></div>
+          <div class="shortcut-row"><kbd>S</kbd><span data-i18n="annotate.saveShortcut">Save now (annotations also auto-save)</span></div>
         </div>
-        <p class="text-mute hidden" id="roBanner" style="font-size:12px;">Read only — claim this image to annotate it.</p>
-        <button class="btn btn-ghost-dark btn-sm hidden" id="claimThisBtn">Claim This Image</button>
-        <button class="btn btn-ghost-dark btn-sm" id="saveBtn">Save now (S)</button>
-        <button class="btn btn-ghost-dark btn-sm" id="clearBtn">Clear All</button>
-        <button class="btn btn-ghost-dark btn-sm" id="releaseBtn">Release Claim</button>
+        <p class="text-mute hidden" id="roBanner" data-i18n="annotate.readonly" style="font-size:12px;">Read only — claim this image to annotate it.</p>
+        <button class="btn btn-ghost-dark btn-sm hidden" id="claimThisBtn" data-i18n="annotate.claimImage">Claim This Image</button>
+        <button class="btn btn-ghost-dark btn-sm" id="saveBtn" data-i18n="annotate.saveNow">Save now (S)</button>
+        <button class="btn btn-ghost-dark btn-sm" id="clearBtn" data-i18n="annotate.clearAll">Clear All</button>
+        <button class="btn btn-ghost-dark btn-sm" id="releaseBtn" data-i18n="annotate.releaseClaim">Release Claim</button>
         <p class="error hidden" id="errMsg"></p>
         <p class="success hidden" id="okMsg"></p>
       </div>
@@ -77,6 +79,7 @@
     </div>
   </div>
   <script src="js/api.js"></script>
+  <script src="js/i18n.js"></script>
   <script src="js/annotate.js?v=20260913-3"></script>
 </body>
 </html>
