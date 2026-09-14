@@ -15,6 +15,10 @@ function appPath(path) {
   return `${APP_BASE_PATH}${path.startsWith('/') ? path : `/${path}`}` || '/';
 }
 
+function apiText(key, fallback, params = {}) {
+  return typeof window.t === 'function' ? window.t(key, params) : fallback;
+}
+
 const API = {
   async request(method, url, body = null, isForm = false) {
     const opts = { method, credentials: 'same-origin' };
@@ -34,7 +38,7 @@ const API = {
     } catch (cause) {
       throw {
         status: 0,
-        detail: `无法连接服务器（${cause.message || '网络请求失败'}）。请检查网络连接后重试。`,
+        detail: apiText('common.cannotConnect', `无法连接服务器（${cause.message || '网络请求失败'}）。请检查网络连接后重试。`, { detail: cause.message || 'network request failed' }),
         cause,
       };
     }
@@ -50,13 +54,15 @@ const API = {
       } catch {}
       if (!detail) {
         if (status === 400) {
-          detail = '请求被网关拒绝（HTTP 400），上传内容没有完整到达服务器。请重新选择本地 YAML 文件后再试。';
+          detail = apiText('common.http400', '请求被网关拒绝（HTTP 400），上传内容没有完整到达服务器。请重新选择本地 YAML 文件后再试。');
         } else if (status === 502) {
-          detail = '网关无法连接标注服务（HTTP 502）。请刷新页面后重试；如果仍然失败，请重新选择本地 YAML 文件。';
+          detail = apiText('common.http502', '网关无法连接标注服务（HTTP 502）。请刷新页面后重试；如果仍然失败，请重新选择本地 YAML 文件。');
         } else if (status === 504) {
-          detail = '网关等待标注服务超时（HTTP 504）。请稍后重试。';
+          detail = apiText('common.http504', '网关等待标注服务超时（HTTP 504）。请稍后重试。');
         } else {
-          detail = `请求失败（HTTP ${status}${res.statusText ? `: ${res.statusText}` : ''}）。`;
+          detail = apiText('common.httpStatus', `请求失败（HTTP ${status}${res.statusText ? `: ${res.statusText}` : ''}）。`, {
+            status, statusText: res.statusText ? `: ${res.statusText}` : '',
+          });
         }
       }
       throw { status, detail, responseText };
